@@ -9,7 +9,7 @@ import { api, ApiError } from '../lib/api';
 import { realtime } from '../lib/ws';
 import { useHeroes } from '../stores/heroes';
 import { useSession } from '../stores/session';
-import HeroPortrait from '../components/HeroPortrait.vue';
+import HeroCard from '../components/HeroCard.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import PageState from '../components/PageState.vue';
 import SimBadge from '../components/SimBadge.vue';
@@ -99,6 +99,19 @@ function slots(team: Side, type: 'pick' | 'ban') {
     return { heroId, skipped: !!e && e.heroId === null, active: i === active };
   });
 }
+/** Hero for sequence step i (latest entry wins, so moderator corrections show), null if empty or skipped. */
+const stepEntry = (i: number) => { const h = s.value?.history as Array<{ step: number; heroId: number | null }> | undefined; return h ? [...h].reverse().find((x) => x.step === i) ?? null : null; };
+const stepHero = (i: number) => stepEntry(i)?.heroId ?? null;
+const stepSkipped = (i: number) => !!stepEntry(i) && stepEntry(i)!.heroId === null;
+/** 1-based number of step i among the same team's bans or picks (B1, P3, ...). */
+const stepOrdinal = (i: number) => { const seq = s.value.config.sequence; const st = seq[i]; return seq.slice(0, i + 1).filter((x: any) => x.team === st.team && x.type === st.type).length; };
+/** Identifies the slot filled by the latest action, so only that card animates. */
+const lastStepKey = computed(() => {
+  const last = s.value?.history?.filter((h: any) => h.reason !== 'correction').at(-1);
+  return last ? `${last.team}-${last.type}-${stepOrdinal(last.step) - 1}` : null;
+});
+const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+const logTime = (at: number) => { const t = s.value?.startedAt; if (!t) return ''; const sec = Math.max(0, Math.round((at - t) / 1000)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
 const assignedTo = (heroId: number) => s.value?.assignments.find((a: any) => a.heroId === heroId)?.userId ?? null;
 const teamPeople = (t: Side) => [s.value.captains[t], ...s.value.members[t]].filter(Boolean) as string[];
 
@@ -198,7 +211,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
             <div class="flex items-center gap-2 flex-wrap">
               <h1 class="text-xl font-semibold tracking-tight truncate">{{ rec.name }}</h1>
               <StatusBadge :status="s.status" />
-              <SimBadge v-if="rec.simulated || heroes.source === 'simulated'" />
+              <SimBadge v-if="rec.simulated" />
             </div>
             <p class="text-xs text-muted mt-1 flex flex-wrap items-center gap-x-2">
               <span>{{ s.config.format }} · {{ s.config.bansPerTeam ? `${s.config.bansPerTeam} ban${s.config.bansPerTeam > 1 ? 's' : ''} per team` : 'no bans' }} · {{ s.config.timerSeconds ? `${s.config.timerSeconds}s timer` : 'No timer' }}</span>
@@ -289,99 +302,165 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
         </template>
 
         <!-- ================= DRAFTING ================= -->
-        <div v-else-if="s.status === 'drafting' || s.status === 'paused'" class="grid gap-4 lg:grid-cols-[minmax(220px,280px)_1fr_minmax(220px,280px)]">
-          <aside v-for="team in SIDES" :key="team" :class="['card p-3 space-y-3 border-t-2', teamBorder(team), team === 'amber' ? 'lg:order-1' : 'lg:order-3', step?.team === team && s.status === 'drafting' && 'ring-1 ring-draft/50']">
-            <div class="flex items-center justify-between gap-2">
-              <h2 :class="['font-semibold truncate', teamText(team)]">{{ rec.teamNames[team] }}</h2>
-              <span class="text-xs text-muted tabular-nums">{{ s.picks[team].length }}/{{ teamSize }}</span>
-            </div>
-            <p class="text-xs text-muted flex items-center gap-1.5"><span :class="['w-2 h-2 rounded-full', online(s.captains[team]) ? 'bg-accent' : 'bg-line']" :title="online(s.captains[team]) ? 'Captain online' : 'Captain offline'" />Captain: <span class="text-text truncate">{{ nameOf(s.captains[team]) ?? 'Unassigned' }}</span></p>
-            <div>
-              <div class="text-[11px] uppercase tracking-wide text-muted mb-1.5 flex items-center gap-1"><Ban class="w-3 h-3" />Bans</div>
-              <div class="flex flex-wrap gap-1.5">
-                <div v-for="(b, i) in slots(team, 'ban')" :key="i" :class="['rounded-lg', b.active && 'ring-2 ring-danger/70']">
-                  <HeroPortrait v-if="b.heroId !== null" :name="heroName(b.heroId)" :src="heroes.byId(b.heroId)?.imageUrl" size="sm" state="banned" :title="heroName(b.heroId)" />
-                  <div v-else class="w-8 h-8 rounded-lg border border-dashed border-line grid place-items-center text-[9px] uppercase text-muted" :title="b.skipped ? 'No ban' : 'Empty'">{{ b.skipped ? 'None' : '' }}</div>
+        <template v-else-if="s.status === 'drafting' || s.status === 'paused'">
+          <div class="grid gap-4 lg:grid-cols-[minmax(220px,260px)_1fr_minmax(220px,260px)]">
+            <!-- Team panels -->
+            <aside v-for="team in SIDES" :key="team"
+              :class="['card p-3 space-y-3 transition-shadow', team === 'amber' ? 'lg:order-1 border-amber-team/50' : 'lg:order-3 border-sapphire-team/50',
+                step?.team === team && s.status === 'drafting' ? (team === 'amber' ? 'shadow-[0_0_0_1px_#f5a524,0_0_24px_-6px_#f5a524]' : 'shadow-[0_0_0_1px_#4f8ff7,0_0_24px_-6px_#4f8ff7]') : '']">
+              <div class="flex items-center gap-2.5">
+                <div :class="['w-9 h-9 rounded-lg grid place-items-center border', team === 'amber' ? 'border-amber-team/50 bg-amber-team/10 text-amber-team' : 'border-sapphire-team/50 bg-sapphire-team/10 text-sapphire-team']"><Crown class="w-4 h-4" /></div>
+                <div class="min-w-0">
+                  <h2 :class="['font-bold truncate', teamText(team)]">{{ rec.teamNames[team] }}</h2>
+                  <p class="text-[11px] text-muted truncate">Captain: {{ nameOf(s.captains[team]) ?? 'Unassigned' }}</p>
                 </div>
-                <span v-if="!slots(team, 'ban').length" class="text-xs text-muted">No bans</span>
+                <span class="ml-auto text-xs text-muted tabular-nums">{{ s.picks[team].length }}/{{ teamSize }}</span>
               </div>
-            </div>
-            <div>
-              <div class="text-[11px] uppercase tracking-wide text-muted mb-1.5">Picks</div>
-              <ul class="grid grid-cols-2 lg:grid-cols-1 gap-1.5">
-                <li v-for="(p, i) in slots(team, 'pick')" :key="i" :class="['flex items-center gap-2 rounded-lg border p-1.5', p.active ? 'border-draft/70 bg-draft/10' : 'border-line bg-bg/40']">
-                  <HeroPortrait v-if="p.heroId !== null" :name="heroName(p.heroId)" :src="heroes.byId(p.heroId)?.imageUrl" size="sm" />
-                  <div v-else class="w-8 h-8 rounded-lg border border-dashed border-line" />
-                  <div class="min-w-0 text-sm font-medium truncate">{{ p.heroId !== null ? heroName(p.heroId) : p.active ? 'Selecting…' : `Pick ${i + 1}` }}</div>
+              <ul class="space-y-1">
+                <li v-for="pid in teamPeople(team)" :key="pid" class="flex items-center gap-2 h-8 px-2 rounded-md bg-bg/50 border border-line/60 text-sm">
+                  <span :class="['w-1.5 h-1.5 rounded-full shrink-0', online(pid) ? 'bg-accent' : 'bg-line']" :title="online(pid) ? 'Online' : 'Offline'" />
+                  <span class="truncate">{{ nameOf(pid) }}</span>
+                  <span v-if="s.captains[team] === pid" class="ml-auto text-[10px] text-muted">(Captain)</span>
                 </li>
               </ul>
-            </div>
-          </aside>
-
-          <section class="order-first lg:order-2 card p-3 sm:p-4 space-y-4 min-w-0">
-            <div class="flex flex-wrap items-center gap-4">
-              <div class="min-w-0">
-                <div class="text-xs text-muted">{{ phaseLabel }}</div>
-                <div v-if="step" class="text-lg font-semibold mt-0.5">
-                  <template v-if="myTurn">Your turn to <span :class="step.type === 'ban' ? 'text-danger' : 'text-draft'">{{ step.type }}</span></template>
-                  <template v-else><span :class="teamText(step.team)">{{ rec.teamNames[step.team] }}</span>{{ ' ' }}<span :class="step.type === 'ban' ? 'text-danger' : 'text-draft'">{{ step.type === 'ban' ? 'bans' : 'picks' }}</span></template>
+              <div>
+                <div class="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1.5 flex items-center gap-1"><Ban class="w-3 h-3" />Bans</div>
+                <div class="grid grid-cols-6 lg:grid-cols-4 gap-1.5">
+                  <HeroCard v-for="(b, i) in slots(team, 'ban')" :key="`b${i}-${b.heroId}`" size="sm" class="!w-full"
+                    :name="b.heroId !== null ? heroName(b.heroId) : null" :src="b.heroId !== null ? heroes.byId(b.heroId)?.imageUrl : null"
+                    :state="b.active ? 'active-ban' : b.heroId !== null ? 'banned' : 'empty'" :label="b.skipped ? 'None' : b.heroId === null ? `B${i + 1}` : null"
+                    :animate="b.heroId !== null && lastStepKey === `${team}-ban-${i}`" :title="b.heroId !== null ? heroName(b.heroId) : undefined" />
+                  <span v-if="!slots(team, 'ban').length" class="col-span-full text-xs text-muted">No bans</span>
                 </div>
-                <div v-if="run && run.length > 1" class="text-xs text-draft mt-0.5">Turn {{ run.index }} of {{ run.length }} in a row</div>
               </div>
-              <div class="ml-auto flex items-center gap-3" aria-live="polite">
-                <Timer class="w-5 h-5 text-muted" />
-                <div v-if="s.status === 'paused'" class="text-2xl font-semibold text-warn">Paused</div>
-                <div v-else-if="remaining !== null" :class="['text-3xl font-semibold tabular-nums w-16 text-right', remaining <= 5 ? 'text-danger' : 'text-text']">{{ remaining }}s</div>
-                <div v-else class="text-sm text-muted">No timer</div>
+              <div>
+                <div class="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1.5">Picks</div>
+                <div class="grid grid-cols-6 lg:grid-cols-3 gap-1.5">
+                  <HeroCard v-for="(p, i) in slots(team, 'pick')" :key="`p${i}-${p.heroId}`" size="md"
+                    :name="p.heroId !== null ? heroName(p.heroId) : null" :src="p.heroId !== null ? heroes.byId(p.heroId)?.imageUrl : null"
+                    :state="p.active ? 'active-pick' : p.heroId !== null ? 'normal' : 'empty'" :label="p.heroId === null ? `P${i + 1}` : null"
+                    :animate="p.heroId !== null && lastStepKey === `${team}-pick-${i}`" />
+                </div>
               </div>
-            </div>
-            <div v-if="remaining !== null && s.status === 'drafting'" class="h-1 rounded bg-line overflow-hidden"><div class="h-full bg-draft transition-[width] duration-200 ease-linear" :style="{ width: `${timerPct}%` }" /></div>
-            <OrderTimeline :sequence="s.config.sequence" :step="s.step" :team-names="rec.teamNames" />
-            <div v-if="!spectate && !myTurn && s.status === 'drafting'" class="rounded-lg px-3 py-2 text-sm border border-line text-muted">
-              {{ mySeat ? "Other team's turn…" : 'You are watching. Only captains can ban and pick.' }}
-            </div>
+            </aside>
 
-            <div class="flex flex-wrap gap-2">
-              <label class="relative flex-1 min-w-[160px]"><span class="sr-only">Search hero</span>
-                <Search class="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
-                <input ref="searchEl" v-model="query" class="input !pl-9 !pr-8" placeholder="Search hero" />
-                <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted border border-line rounded px-1">/</kbd>
-              </label>
-              <div v-if="heroTypes.length" class="flex rounded-lg border border-line overflow-hidden text-sm">
-                <button v-for="f in ['all', ...heroTypes]" :key="f" :class="['px-3 h-9 capitalize', heroType === f ? 'bg-raised text-text' : 'text-muted hover:text-text']" @click="heroType = f">{{ f }}</button>
+            <!-- Center -->
+            <section class="order-first lg:order-2 card p-3 sm:p-4 space-y-4 min-w-0">
+              <div class="flex flex-wrap items-stretch gap-3">
+                <div :key="s.step" :class="['flex-1 min-w-[200px] flex items-center gap-3 rounded-xl border px-4 py-3 animate-fade-up',
+                  step?.type === 'ban' ? 'border-danger/40 bg-danger/[0.07]' : 'border-primary/40 bg-primary/[0.08]']">
+                  <component :is="step?.type === 'ban' ? Ban : Lock" :class="['w-6 h-6 shrink-0', step?.type === 'ban' ? 'text-danger' : 'text-primary']" />
+                  <div class="min-w-0">
+                    <div :class="['text-base font-bold', step?.type === 'ban' ? 'text-danger' : 'text-primary']">{{ step?.type === 'ban' ? 'Ban Phase' : 'Pick Phase' }}</div>
+                    <div class="text-sm">
+                      <template v-if="s.status === 'paused'"><span class="text-warn">Paused by a moderator</span></template>
+                      <template v-else-if="myTurn">Your turn to {{ step!.type }}</template>
+                      <template v-else-if="step"><span :class="teamText(step.team)">{{ rec.teamNames[step.team] }}</span> is {{ step.type === 'ban' ? 'banning' : 'picking' }}</template>
+                    </div>
+                    <div class="text-[11px] text-muted">{{ phaseLabel }}<template v-if="run && run.length > 1"> · <span class="text-primary">Turn {{ run.index }} of {{ run.length }} in a row</span></template></div>
+                  </div>
+                </div>
+                <div class="relative w-[112px] rounded-xl border border-line bg-bg/60 grid place-items-center py-2" aria-live="polite">
+                  <svg v-if="remaining !== null && s.status === 'drafting'" viewBox="0 0 100 100" class="absolute inset-1.5 w-[calc(100%-12px)] h-[calc(100%-12px)] -rotate-90" aria-hidden="true">
+                    <rect x="3" y="3" width="94" height="94" rx="12" fill="none" stroke="currentColor" stroke-width="3" class="text-line" />
+                    <rect x="3" y="3" width="94" height="94" rx="12" fill="none" stroke="currentColor" stroke-width="3" pathLength="100" :stroke-dasharray="`${timerPct} 100`" :class="['transition-[stroke-dasharray] duration-300 ease-linear', remaining <= 10 ? 'text-danger' : 'text-primary']" />
+                  </svg>
+                  <div v-if="s.status === 'paused'" class="text-lg font-bold text-warn flex items-center gap-1"><Pause class="w-4 h-4" />Paused</div>
+                  <div v-else-if="remaining !== null" :key="remaining <= 10 ? remaining : 'x'" :class="['text-3xl font-extrabold tabular-nums', remaining <= 10 ? 'text-danger animate-tick' : '']">{{ clock(remaining) }}</div>
+                  <div v-else class="text-xs text-muted flex flex-col items-center gap-1"><Timer class="w-5 h-5" />No timer</div>
+                </div>
               </div>
-              <span class="self-center text-xs text-muted tabular-nums">{{ freeCount }} free</span>
-            </div>
-            <p v-if="heroes.source === 'simulated'" class="text-xs text-warn">Simulated hero roster: hero IDs are placeholders, not Deadlock IDs.</p>
 
-            <PageState :empty="!roster.length" empty-text="No heroes match your search.">
-              <div class="grid grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-2 max-h-[52vh] lg:max-h-none overflow-y-auto pr-1">
-                <button v-for="h in roster" :key="h.id" type="button"
-                  :disabled="!myTurn || !!unavailableReason(h.id) || pending"
-                  :title="unavailableReason(h.id) ? `${h.name} (${unavailableReason(h.id)})` : h.name"
-                  :class="['flex flex-col items-center gap-1 p-1.5 rounded-lg border text-center transition-colors',
-                    selected === h.id ? (step?.type === 'ban' ? 'border-danger bg-danger/10' : 'border-draft bg-draft/15') : 'border-transparent',
-                    myTurn && !unavailableReason(h.id) ? 'hover:border-line hover:bg-raised cursor-pointer' : 'cursor-default']"
-                  @click="choose(h.id)">
-                  <HeroPortrait :name="h.name" :src="h.imageUrl" :state="unavailableReason(h.id) === 'banned' ? 'banned' : 'normal'" :class="unavailableReason(h.id) && unavailableReason(h.id) !== 'banned' && 'opacity-30'" />
-                  <span class="text-[11px] leading-tight truncate w-full" :class="unavailableReason(h.id) ? 'text-muted line-through' : ''">{{ h.name }}</span>
-                </button>
-              </div>
-            </PageState>
+              <!-- Sequence strip: every ban/pick in order -->
+              <ol class="flex gap-1.5 overflow-x-auto pb-1" aria-label="Draft sequence">
+                <li v-for="(st, i) in s.config.sequence" :key="i" class="shrink-0 w-11 text-center">
+                  <HeroCard size="xs" class="!w-11 !h-14"
+                    :name="stepHero(i) !== null ? heroName(stepHero(i)) : null" :src="stepHero(i) !== null ? heroes.byId(stepHero(i)!)?.imageUrl : null"
+                    :state="i === s.step && s.status === 'drafting' ? (st.type === 'ban' ? 'active-ban' : 'active-pick') : stepHero(i) !== null ? (st.type === 'ban' ? 'banned' : 'normal') : 'empty'"
+                    :label="stepHero(i) === null ? (stepSkipped(i) ? '—' : '') : null" :title="stepHero(i) !== null ? heroName(stepHero(i)) : undefined" />
+                  <span :class="['block text-[10px] font-semibold mt-1', st.team === 'amber' ? 'text-amber-team' : 'text-sapphire-team', i < s.step && 'opacity-50']">{{ st.type === 'ban' ? 'B' : 'P' }}{{ stepOrdinal(i) }}</span>
+                </li>
+              </ol>
 
-            <div v-if="myTurn" class="sticky bottom-0 -mx-3 sm:-mx-4 -mb-3 sm:-mb-4 p-3 border-t border-line bg-surface rounded-b-xl flex flex-wrap items-center gap-3">
-              <HeroPortrait v-if="selected !== null" :name="heroName(selected)" :src="heroes.byId(selected)?.imageUrl" size="sm" />
-              <span class="text-sm truncate">{{ selected !== null ? heroName(selected) : 'Select a hero' }}</span>
-              <div class="ml-auto flex gap-2">
-                <button v-if="step?.type === 'ban'" class="btn-ghost" :disabled="pending" @click="command({ kind: 'skip', expectedSeq: s.seq })"><SkipForward class="w-4 h-4" />Skip this ban</button>
-                <button :class="step?.type === 'ban' ? 'btn-danger' : 'btn-draft'" :disabled="selected === null || pending" @click="lockIn">
-                  <component :is="step?.type === 'ban' ? Ban : Lock" class="w-4 h-4" />{{ step?.type === 'ban' ? 'Ban' : 'Lock in' }} {{ selected !== null ? heroName(selected) : '' }}
-                  <kbd class="text-[10px] opacity-70 border border-current rounded px-1">Enter</kbd>
-                </button>
+              <div v-if="!spectate && !myTurn && s.status === 'drafting'" class="rounded-lg px-3 py-2 text-sm border border-line text-muted">
+                {{ mySeat ? "Other team's turn…" : 'You are watching. Only captains can ban and pick.' }}
               </div>
-            </div>
-          </section>
-        </div>
+
+              <div class="flex flex-wrap gap-2">
+                <label class="relative flex-1 min-w-[160px]"><span class="sr-only">Search hero</span>
+                  <Search class="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input ref="searchEl" v-model="query" class="input !pl-9 !pr-8" placeholder="Search heroes…" />
+                  <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted border border-line rounded px-1">/</kbd>
+                </label>
+                <div v-if="heroTypes.length" class="flex rounded-lg border border-line overflow-hidden text-sm">
+                  <button v-for="f in ['all', ...heroTypes]" :key="f" :class="['px-3 h-9 capitalize', heroType === f ? 'bg-primary text-white' : 'text-muted hover:text-text']" @click="heroType = f">{{ f }}</button>
+                </div>
+                <span class="self-center text-xs text-muted tabular-nums">{{ freeCount }} free</span>
+              </div>
+              <p v-if="heroes.source === 'builtin'" class="text-xs text-muted">Hero portraits load once the server can reach the Deadlock assets API.</p>
+
+              <PageState :empty="!roster.length" empty-text="No heroes match your search.">
+                <div class="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2 max-h-[56vh] lg:max-h-[62vh] overflow-y-auto pr-1">
+                  <button v-for="h in roster" :key="h.id" type="button" data-hero
+                    :disabled="!myTurn || !!unavailableReason(h.id) || pending"
+                    :title="unavailableReason(h.id) ? `${h.name} (${unavailableReason(h.id)})` : h.name"
+                    :class="['rounded-lg text-left transition-transform duration-150', myTurn && !unavailableReason(h.id) ? 'hover:-translate-y-0.5 hover:brightness-110 cursor-pointer' : 'cursor-default', selected === h.id && 'scale-[1.03]']"
+                    @click="choose(h.id)">
+                    <HeroCard :name="h.name" :src="h.imageUrl"
+                      :state="selected === h.id ? (step?.type === 'ban' ? 'selected-ban' : 'selected-pick') : unavailableReason(h.id) === 'banned' ? 'banned' : unavailableReason(h.id) ? 'taken' : 'normal'"
+                      :label="unavailableReason(h.id) && unavailableReason(h.id) !== 'banned' ? unavailableReason(h.id) : null" />
+                  </button>
+                </div>
+              </PageState>
+
+              <div v-if="myTurn" class="sticky bottom-0 -mx-3 sm:-mx-4 -mb-3 sm:-mb-4 p-3 border-t border-line bg-surface/95 backdrop-blur rounded-b-xl flex flex-wrap items-center gap-3">
+                <HeroCard v-if="selected !== null" :key="selected" size="sm" class="animate-fade-up" :name="heroName(selected)" :src="heroes.byId(selected)?.imageUrl" :state="step?.type === 'ban' ? 'selected-ban' : 'selected-pick'" />
+                <span class="text-sm font-semibold truncate">{{ selected !== null ? heroName(selected) : 'Select a hero' }}</span>
+                <div class="ml-auto flex gap-2">
+                  <button v-if="step?.type === 'ban'" class="btn-ghost" :disabled="pending" @click="command({ kind: 'skip', expectedSeq: s.seq })"><SkipForward class="w-4 h-4" />Skip this ban</button>
+                  <button :class="step?.type === 'ban' ? 'btn-danger-solid' : 'btn-primary'" :disabled="selected === null || pending" @click="lockIn">
+                    <component :is="step?.type === 'ban' ? Ban : Lock" class="w-4 h-4" />{{ step?.type === 'ban' ? 'Ban' : 'Lock in' }} {{ selected !== null ? heroName(selected) : '' }}
+                    <kbd class="text-[10px] opacity-70 border border-current rounded px-1">Enter</kbd>
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Progress / current turn / log -->
+          <div v-if="!broadcast" class="grid gap-4 lg:grid-cols-[1.4fr_260px_1fr]">
+            <section class="card p-4 min-w-0">
+              <h2 class="h-section mb-3">Draft Progress</h2>
+              <ol class="flex items-start overflow-x-auto pb-1">
+                <li v-for="(st, i) in s.config.sequence" :key="i" class="flex-1 min-w-[34px] flex flex-col items-center relative">
+                  <div v-if="i > 0" :class="['absolute top-[7px] right-1/2 w-full h-0.5', i <= s.step ? (st.team === 'amber' ? 'bg-amber-team/70' : 'bg-sapphire-team/70') : 'bg-line']" />
+                  <span :class="['relative z-[1] w-4 h-4 rounded-full border-2 transition-colors',
+                    i < s.step ? (st.team === 'amber' ? 'bg-amber-team border-amber-team' : 'bg-sapphire-team border-sapphire-team') : i === s.step ? 'bg-bg border-primary animate-glow' : 'bg-bg border-line']" />
+                  <span :class="['text-[10px] font-semibold mt-1.5', st.team === 'amber' ? 'text-amber-team' : 'text-sapphire-team', i > s.step && 'opacity-40']">{{ st.type === 'ban' ? 'B' : 'P' }}{{ stepOrdinal(i) }}</span>
+                </li>
+              </ol>
+            </section>
+            <section class="card p-4">
+              <h2 class="text-xs font-semibold text-muted mb-2">Current Turn</h2>
+              <div v-if="step" :key="s.step" class="flex items-center gap-3 animate-fade-up">
+                <div :class="['w-10 h-10 rounded-full grid place-items-center border-2', step.team === 'amber' ? 'border-amber-team text-amber-team' : 'border-sapphire-team text-sapphire-team']"><component :is="step.type === 'ban' ? Ban : Lock" class="w-4 h-4" /></div>
+                <div class="min-w-0"><div :class="['font-bold truncate', teamText(step.team)]">{{ rec.teamNames[step.team] }}</div><div class="text-sm text-muted">{{ step.type === 'ban' ? 'Ban' : 'Pick' }} a hero</div></div>
+              </div>
+            </section>
+            <section class="card p-4 min-w-0">
+              <h2 class="h-section mb-2">Draft Log</h2>
+              <ol class="space-y-1 max-h-40 overflow-y-auto text-sm">
+                <li v-for="h in [...s.history].reverse()" :key="h.seq" class="flex items-center gap-2 animate-fade-up">
+                  <span class="text-[11px] text-muted tabular-nums w-10 shrink-0">{{ logTime(h.at) }}</span>
+                  <span :class="['font-medium shrink-0', teamText(h.team)]">{{ rec.teamNames[h.team] }}</span>
+                  <span class="text-muted truncate">{{ h.heroId === null ? 'skipped a ban' : `${h.reason === 'correction' ? 'corrected to' : h.type === 'ban' ? 'banned' : 'picked'} ${heroName(h.heroId)}` }}</span>
+                  <span v-if="h.reason === 'timeout'" class="ml-auto text-[10px] uppercase text-warn">timeout</span>
+                </li>
+                <li v-if="s.startedAt" class="flex items-center gap-2 text-muted"><span class="text-[11px] tabular-nums w-10">{{ logTime(s.startedAt) }}</span>Draft started</li>
+              </ol>
+            </section>
+          </div>
+        </template>
 
         <!-- ================= RESULT ================= -->
         <template v-else-if="s.status === 'completed'">
@@ -392,8 +471,8 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                 <h2 :class="['text-lg font-semibold', teamText(t)]">{{ rec.teamNames[t] }}</h2>
                 <div class="flex items-center gap-1.5 text-xs text-muted">Bans
                   <template v-for="(b, i) in slots(t, 'ban')" :key="i">
-                    <HeroPortrait v-if="b.heroId !== null" :name="heroName(b.heroId)" :src="heroes.byId(b.heroId)?.imageUrl" size="sm" state="banned" :title="heroName(b.heroId)" />
-                    <span v-else class="h-8 px-1.5 grid place-items-center rounded-lg border border-dashed border-line text-[10px] uppercase">None</span>
+                    <HeroCard v-if="b.heroId !== null" size="xs" :name="heroName(b.heroId)" :src="heroes.byId(b.heroId)?.imageUrl" state="banned" :title="heroName(b.heroId)" />
+                    <span v-else class="h-11 w-9 grid place-items-center rounded-lg border border-dashed border-line text-[9px] uppercase">None</span>
                   </template>
                   <span v-if="!slots(t, 'ban').length">None</span>
                 </div>
@@ -401,7 +480,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               <ul class="space-y-1.5">
                 <li v-for="(h, i) in s.picks[t]" :key="h" class="flex items-center gap-3 rounded-lg border border-line bg-bg/40 p-2">
                   <span class="text-xs text-muted tabular-nums w-4">{{ i + 1 }}</span>
-                  <HeroPortrait :name="heroName(h)" :src="heroes.byId(h)?.imageUrl" />
+                  <HeroCard size="sm" :name="heroName(h)" :src="heroes.byId(h)?.imageUrl" class="animate-slot-in" :style="{ animationDelay: `${i * 70}ms` }" />
                   <span class="font-medium flex-1 truncate">{{ heroName(h) }}</span>
                   <select v-if="(mySeat === t || isMod) && !spectate" class="input !h-8 !w-auto max-w-[160px]" :aria-label="`Player for ${heroName(h)}`" :value="assignedTo(h) ?? ''"
                     :disabled="pending" @change="command({ kind: 'assign', heroId: h, userId: ($event.target as HTMLSelectElement).value || null })">
@@ -431,7 +510,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
         <div v-else class="card p-6 text-center text-muted">This draft was cancelled.</div>
 
         <!-- History -->
-        <section v-if="!broadcast && s.history.length" class="card p-4">
+        <section v-if="!broadcast && s.history.length && s.status === 'completed'" class="card p-4">
           <h2 class="h-section flex items-center gap-2 mb-3"><History class="w-4 h-4" />Timeline</h2>
           <ol class="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
             <li v-for="h in s.history" :key="h.seq" class="flex items-center gap-2 text-sm rounded-lg border border-line px-2 py-1.5">

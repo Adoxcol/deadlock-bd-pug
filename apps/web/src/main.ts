@@ -16,6 +16,7 @@ const router = createRouter({
     { path: '/draft/:draftId', component: () => import('./pages/DraftRoom.vue'), props: (r) => ({ draftId: r.params.draftId, spectate: false }) },
     { path: '/draft/:draftId/spectate', component: () => import('./pages/DraftRoom.vue'), props: (r) => ({ draftId: r.params.draftId, spectate: true }) },
     { path: '/tracker', component: () => import('./pages/Tracker.vue') },
+    { path: '/matches', component: () => import('./pages/Matches.vue') },
     { path: '/matches/:matchId', component: () => import('./pages/Match.vue'), props: true },
     { path: '/matches/:matchId/live', component: () => import('./pages/LiveMatch.vue'), props: true },
     { path: '/leaderboard', component: () => import('./pages/Leaderboard.vue') },

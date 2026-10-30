@@ -19,7 +19,7 @@ import { RedisSessionStore, MemorySessionStore, type SessionStore } from './auth
 import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
 import { steamLoginUrl, verifySteamAssertion, steam64ToAccountId } from './auth/steam.js';
-import { fetchHeroes, SIMULATED_HEROES, type Hero } from './heroes.js';
+import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
 import { createDeadlockApi } from './tracker/deadlockApi.js';
 import { resolveIdentifier } from './tracker/resolve.js';
 import { LiveManager } from './live/ingestor.js';
@@ -46,16 +46,20 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
 
   // ---------- Heroes ----------
   let heroes: Hero[] = [];
-  let heroSource: 'deadlock-api' | 'database' | 'simulated' = 'simulated';
+  let heroSource: 'deadlock-api' | 'database' | 'builtin' = 'builtin';
   async function loadHeroes() {
     try { heroes = await fetchHeroes(cfg.DEADLOCK_ASSETS_URL); heroSource = 'deadlock-api'; await syncHeroes(db, heroes); return; }
     catch (e) { app.log.warn(`hero assets unavailable: ${(e as Error).message}`); }
     const stored = await db.hero.findMany({ where: { isActive: true } });
     if (stored.length) { heroes = stored.map((h) => ({ id: h.id, name: h.name, imageUrl: h.imageUrl, simulated: false })); heroSource = 'database'; return; }
-    if (cfg.SIMULATION_MODE) { heroes = SIMULATED_HEROES; heroSource = 'simulated'; return; }
-    heroes = []; app.log.error('No hero roster available; drafts cannot start until the assets API is reachable.');
+    // Real IDs and names, no portraits; refreshed from the assets API as soon as it is reachable (Admin → Refresh).
+    heroes = BUILTIN_HEROES; heroSource = 'builtin';
+    app.log.warn('Using the built-in hero roster (no portraits) until the Deadlock assets API is reachable.');
   }
   await loadHeroes();
+  // Keep trying for portraits and newly released heroes until the assets API answers, then refresh daily.
+  const scheduleHeroRefresh = () => setTimeout(() => void loadHeroes().catch(() => {}).finally(scheduleHeroRefresh), (heroSource as string) === 'deadlock-api' ? 24 * 3600_000 : 10 * 60_000).unref();
+  scheduleHeroRefresh();
   const heroName = (id: number) => heroes.find((h) => h.id === id)?.name ?? `Hero ${id}`;
 
   // ---------- Discord ----------
@@ -168,9 +172,9 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
 
   // ---------- Auth ----------
   app.get('/api/me', async (req) => {
-    if (!req.user) return { user: null, simulationMode: cfg.SIMULATION_MODE, discordEnabled: !!cfg.DISCORD_CLIENT_ID };
+    if (!req.user) return { user: null, simulationMode: cfg.SIMULATION_MODE, discordEnabled: !!cfg.DISCORD_CLIENT_ID, discordInvite: cfg.DISCORD_INVITE_URL ?? null };
     const [discord, steam] = await Promise.all([db.discordAccount.findUnique({ where: { userId: req.user.id } }), db.steamAccount.findUnique({ where: { userId: req.user.id } })]);
-    return { user: publicUser(req.user), discord: discord && { username: discord.username }, steam: steam && { steamId64: steam.steamId64, personaName: steam.personaName }, simulationMode: cfg.SIMULATION_MODE, discordEnabled: !!cfg.DISCORD_CLIENT_ID };
+    return { user: publicUser(req.user), discord: discord && { username: discord.username }, steam: steam && { steamId64: steam.steamId64, personaName: steam.personaName }, simulationMode: cfg.SIMULATION_MODE, discordEnabled: !!cfg.DISCORD_CLIENT_ID, discordInvite: cfg.DISCORD_INVITE_URL ?? null };
   });
 
   const discordRedirect = `${cfg.PUBLIC_URL}/api/auth/discord/callback`;
@@ -224,26 +228,27 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
 
   app.get('/api/dashboard', async () => {
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-    const [activePugs, members, completedToday, liveMatches, recent, season] = await Promise.all([
+    const [activePugs, members, completedToday, liveMatches, recent, season, pugsPlayed] = await Promise.all([
       db.pugSession.findMany({ where: { status: { in: ['WAITING', 'DRAFTING', 'LIVE'] } }, include: { teams: true, participants: true, draftRooms: { orderBy: { createdAt: 'desc' }, take: 1 }, matches: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { number: 'desc' } }),
       db.user.count({ where: { isSimulated: false } }),
       db.matchResult.count({ where: { createdAt: { gte: startOfDay } } }),
       db.match.count({ where: { trackingState: { in: ['MATCH_DETECTED', 'LIVE_AVAILABLE'] } } }),
       db.matchResult.findMany({ orderBy: { createdAt: 'desc' }, take: 6, include: { match: { include: { pug: { include: { teams: true } } } } } }),
       db.season.findFirst({ where: { isActive: true } }),
+      db.pugSession.count({ where: { status: 'COMPLETED', isSimulated: false } }),
     ]);
     const activeDrafts = await store.listActive();
     const drafting = activeDrafts.filter((d) => d.state.status === 'drafting' || d.state.status === 'paused');
     const top = season ? await db.playerRating.findMany({ where: { seasonId: season.id }, orderBy: { rating: 'desc' }, take: 5, include: { user: true } }) : [];
     return {
-      stats: { activePugs: activePugs.length, playersDrafting: drafting.reduce((n, d) => n + TEAM_SIZE[d.state.config.format] * 2, 0), matchesLive: liveMatches, completedToday, members },
+      stats: { pugsPlayed, activePugs: activePugs.length, playersDrafting: drafting.reduce((n, d) => n + TEAM_SIZE[d.state.config.format] * 2, 0), matchesLive: liveMatches, completedToday, members },
       sessions: activePugs.map((p) => ({
         id: p.id, number: p.number, status: p.status, players: p.participants.length, format: p.format, isSimulated: p.isSimulated,
         teams: Object.fromEntries(p.teams.map((t) => [t.side.toLowerCase(), t.name])), createdAt: p.createdAt,
         draft: p.draftRooms[0] ? { id: p.draftRooms[0].id, status: p.draftRooms[0].status } : null,
         match: p.matches[0] ? { id: p.matches[0].id, state: p.matches[0].trackingState } : null,
       })),
-      drafts: activeDrafts.filter((d) => d.visibility === 'public').map((d) => ({ id: d.id, name: d.name, status: d.state.status, teamNames: d.teamNames, simulated: d.simulated, startedAt: d.state.startedAt })),
+      drafts: activeDrafts.filter((d) => d.visibility === 'public').map((d) => ({ id: d.id, code: d.code, name: d.name, status: d.state.status, teamNames: d.teamNames, simulated: d.simulated, startedAt: d.state.startedAt, format: d.state.config.format, picks: d.state.picks, players: [d.state.captains.amber, d.state.captains.sapphire].filter(Boolean).length + d.state.members.amber.length + d.state.members.sapphire.length })),
       recent: recent.map((r) => ({ matchId: r.matchId, winner: r.winner, source: r.source, verified: r.verified, durationSec: r.match.durationSec, date: r.createdAt, pugNumber: r.match.pug?.number ?? null, isSimulated: r.match.isSimulated, teams: Object.fromEntries((r.match.pug?.teams ?? []).map((t) => [t.side.toLowerCase(), t.name])) })),
       leaderboard: top.map((t) => ({ userId: t.userId, displayName: t.user.displayName, rating: t.rating, wins: t.wins, losses: t.losses })),
       season: season && { id: season.id, name: season.name, isSimulated: season.isSimulated },
@@ -325,7 +330,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     for (const cid of [b.amberCaptainId, b.sapphireCaptainId]) if (cid && !(await db.user.findUnique({ where: { id: cid } }))) throw Object.assign(new Error('Captain not found'), { statusCode: 400 });
     let rec;
     try {
-      rec = await drafts.create({ ...b, teamNames: { amber: b.amberName, sapphire: b.sapphireName }, captains: { amber: b.amberCaptainId, sapphire: b.sapphireCaptainId }, simulated: req.user!.isSimulated || heroSource === 'simulated' });
+      rec = await drafts.create({ ...b, teamNames: { amber: b.amberName, sapphire: b.sapphireName }, captains: { amber: b.amberCaptainId, sapphire: b.sapphireCaptainId }, simulated: req.user!.isSimulated });
     } catch (e) { throw Object.assign(e as Error, { statusCode: 400 }); }
     for (const [t, uid] of [['AMBER', b.amberCaptainId], ['SAPPHIRE', b.sapphireCaptainId]] as const) {
       if (uid) { const u = await db.user.findUniqueOrThrow({ where: { id: uid } }); await db.draftParticipant.create({ data: { draftId: rec.id, userId: uid, team: t, isCaptain: true, displayNameSnapshot: u.displayName } }); }

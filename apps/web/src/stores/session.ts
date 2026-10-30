@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 export type Role = 'SPECTATOR' | 'PLAYER' | 'CAPTAIN' | 'MODERATOR' | 'ADMIN' | 'OWNER';
 const ORDER: Role[] = ['SPECTATOR', 'PLAYER', 'CAPTAIN', 'MODERATOR', 'ADMIN', 'OWNER'];
 
-interface Me { user: { id: string; displayName: string; role: Role; isSimulated: boolean } | null; discord?: { username: string } | null; steam?: { steamId64: string; personaName: string | null } | null; simulationMode: boolean; discordEnabled: boolean }
+interface Me { user: { id: string; displayName: string; role: Role; isSimulated: boolean } | null; discord?: { username: string } | null; steam?: { steamId64: string; personaName: string | null } | null; simulationMode: boolean; discordEnabled: boolean; discordInvite?: string | null }
 
 export const useSession = defineStore('session', {
   state: () => ({ me: null as Me | null, loaded: false }),
