@@ -1,0 +1,10 @@
+{$DOMAIN} {
+	encode gzip
+	handle /api/* { reverse_proxy app:3001 }
+	handle /ws { reverse_proxy app:3001 }
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}

@@ -1,0 +1,407 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MODERATOR
+  CAPTAIN
+  PLAYER
+  SPECTATOR
+}
+
+enum PugStatus {
+  WAITING
+  DRAFTING
+  LIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum DraftProviderKind {
+  NATIVE
+  DEADLOCKLABS
+  EXTERNAL
+}
+
+enum TeamSide {
+  AMBER
+  SAPPHIRE
+}
+
+enum DraftActionKind {
+  PICK
+  BAN
+}
+
+enum ResultSource {
+  API
+  MANUAL
+  SIMULATED
+}
+
+enum TrackingState {
+  WAITING_FOR_LOBBY
+  LOBBY_FOUND
+  WAITING_FOR_MATCH
+  MATCH_DETECTED
+  LIVE_AVAILABLE
+  LIVE_UNAVAILABLE
+  MATCH_COMPLETED
+  MATCH_DATA_PENDING
+  MATCH_NOT_FOUND
+  API_UNAVAILABLE
+  MANUAL_REQUIRED
+}
+
+enum ProfileVisibility {
+  PUBLIC
+  MEMBERS
+  PRIVATE
+}
+
+model User {
+  id                String            @id @default(cuid())
+  displayName       String
+  role              Role              @default(PLAYER)
+  visibility        ProfileVisibility @default(PUBLIC)
+  isSimulated       Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  discord           DiscordAccount?
+  steam             SteamAccount?
+  pugParticipations PugParticipant[]
+  ratings           PlayerRating[]
+}
+
+model DiscordAccount {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  discordId String   @unique
+  username  String
+  avatar    String?
+  linkedAt  DateTime @default(now())
+}
+
+model SteamAccount {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  steamId64   String   @unique
+  accountId   String   @unique // SteamID3 account id used by Deadlock API
+  personaName String?
+  linkedAt    DateTime @default(now())
+}
+
+model Guild {
+  id                String       @id @default(cuid())
+  discordGuildId    String       @unique
+  name              String
+  announceChannelId String?
+  resultsChannelId  String?
+  draftChannelId    String?
+  pugs              PugSession[]
+}
+
+model Season {
+  id              String              @id @default(cuid())
+  name            String
+  startsAt        DateTime?
+  endsAt          DateTime?
+  isActive        Boolean             @default(false)
+  isArchived      Boolean             @default(false)
+  isSimulated     Boolean             @default(false)
+  initialRating   Int                 @default(1500)
+  kFactor         Int                 @default(24)
+  softResetFactor Float               @default(1) // 1 = full reset to initial, 0 = carry over
+  ratings         PlayerRating[]
+  transactions    RatingTransaction[]
+}
+
+model PugSession {
+  id             String              @id @default(cuid())
+  number         Int                 @unique @default(autoincrement())
+  guildId        String?
+  guild          Guild?              @relation(fields: [guildId], references: [id])
+  status         PugStatus           @default(WAITING)
+  format         String              @default("6v6")
+  draftProvider  DraftProviderKind   @default(NATIVE)
+  createdById    String
+  isSimulated    Boolean             @default(false)
+  createdAt      DateTime            @default(now())
+  completedAt    DateTime?
+  participants   PugParticipant[]
+  teams          Team[]
+  draftRooms     DraftRoom[]
+  externalDrafts ExternalDraftLink[]
+  matches        Match[]
+
+  @@index([status, createdAt])
+}
+
+model PugParticipant {
+  id        String     @id @default(cuid())
+  pugId     String
+  pug       PugSession @relation(fields: [pugId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  team      TeamSide?
+  isCaptain Boolean    @default(false)
+
+  @@unique([pugId, userId])
+}
+
+model Team {
+  id    String     @id @default(cuid())
+  pugId String
+  pug   PugSession @relation(fields: [pugId], references: [id], onDelete: Cascade)
+  side  TeamSide
+  name  String
+
+  @@unique([pugId, side])
+}
+
+model DraftRoom {
+  id           String             @id @default(cuid())
+  pugId        String?
+  pug          PugSession?        @relation(fields: [pugId], references: [id])
+  name         String
+  amberName    String
+  sapphireName String
+  visibility   String             @default("public")
+  config       Json // DraftConfig (format, bans, timer, sequence, timeoutBehavior)
+  state        Json // authoritative DraftState snapshot
+  seq          Int                @default(0)
+  status       String             @default("waiting")
+  isSimulated  Boolean            @default(false)
+  createdById  String?
+  createdAt    DateTime           @default(now())
+  completedAt  DateTime?
+  participants DraftParticipant[]
+  actions      DraftAction[]
+  selections   DraftSelection[]
+  bans         DraftBan[]
+
+  @@index([status])
+}
+
+model DraftParticipant {
+  id                  String    @id @default(cuid())
+  draftId             String
+  draft               DraftRoom @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  userId              String
+  team                TeamSide?
+  isCaptain           Boolean   @default(false)
+  displayNameSnapshot String
+
+  @@unique([draftId, userId])
+}
+
+model DraftAction {
+  id        String          @id @default(cuid())
+  draftId   String
+  draft     DraftRoom       @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  seq       Int
+  step      Int
+  team      TeamSide
+  kind      DraftActionKind
+  heroId    Int?
+  actorId   String?
+  reason    String // manual | timeout | correction
+  createdAt DateTime        @default(now())
+
+  @@unique([draftId, seq])
+}
+
+model DraftSelection {
+  id               String    @id @default(cuid())
+  draftId          String
+  draft            DraftRoom @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  team             TeamSide
+  order            Int
+  heroId           Int
+  heroNameSnapshot String
+
+  @@unique([draftId, team, order])
+}
+
+model DraftBan {
+  id               String    @id @default(cuid())
+  draftId          String
+  draft            DraftRoom @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  team             TeamSide
+  order            Int
+  heroId           Int
+  heroNameSnapshot String
+
+  @@unique([draftId, team, order])
+}
+
+model ExternalDraftLink {
+  id             String            @id @default(cuid())
+  pugId          String
+  pug            PugSession        @relation(fields: [pugId], references: [id], onDelete: Cascade)
+  provider       DraftProviderKind
+  url            String
+  importedResult Json?
+  importedById   String?
+  importedAt     DateTime?
+  createdAt      DateTime          @default(now())
+}
+
+model Match {
+  id              String             @id @default(cuid())
+  deadlockMatchId String?            @unique
+  partyId         String?
+  lobbyId         String?
+  pugId           String?
+  pug             PugSession?        @relation(fields: [pugId], references: [id])
+  draftId         String?
+  trackingState   TrackingState      @default(WAITING_FOR_MATCH)
+  trackingNote    String?
+  isSimulated     Boolean            @default(false)
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationSec     Int?
+  createdAt       DateTime           @default(now())
+  participants    MatchParticipant[]
+  events          MatchEvent[]
+  result          MatchResult?
+
+  @@index([trackingState])
+}
+
+model MatchParticipant {
+  id                  String   @id @default(cuid())
+  matchId             String
+  match               Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  userId              String?
+  steamAccountId      String?
+  team                TeamSide
+  heroId              Int?
+  displayNameSnapshot String
+  heroNameSnapshot    String?
+
+  @@unique([matchId, steamAccountId])
+}
+
+model MatchEvent {
+  id        String @id @default(cuid())
+  matchId   String
+  match     Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  dedupeKey String
+  kind      String
+  tick      Int
+  gameTime  Float?
+  data      Json
+
+  @@unique([matchId, dedupeKey])
+  @@index([matchId, tick])
+}
+
+model MatchResult {
+  id           String            @id @default(cuid())
+  matchId      String            @unique
+  match        Match             @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  seasonId     String
+  winner       TeamSide
+  source       ResultSource
+  verified     Boolean           @default(false)
+  verifiedById String?
+  rated        Boolean           @default(false)
+  createdAt    DateTime          @default(now())
+  stats        PlayerStatistic[]
+}
+
+model PlayerStatistic {
+  id                  String      @id @default(cuid())
+  resultId            String
+  result              MatchResult @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  userId              String?
+  team                TeamSide
+  heroId              Int?
+  kills               Int?
+  deaths              Int?
+  assists             Int?
+  netWorth            Int?
+  heroDamage          Int?
+  won                 Boolean
+  displayNameSnapshot String
+
+  @@unique([resultId, userId])
+  @@index([userId])
+}
+
+model PlayerRating {
+  id          String @id @default(cuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id])
+  seasonId    String
+  season      Season @relation(fields: [seasonId], references: [id])
+  rating      Int
+  gamesPlayed Int    @default(0)
+  wins        Int    @default(0)
+  losses      Int    @default(0)
+
+  @@unique([seasonId, userId])
+  @@index([seasonId, rating])
+}
+
+model RatingTransaction {
+  id        String   @id @default(cuid())
+  seasonId  String
+  season    Season   @relation(fields: [seasonId], references: [id])
+  matchId   String
+  userId    String
+  before    Int
+  delta     Int
+  after     Int
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, userId, seasonId])
+  @@index([userId, createdAt])
+}
+
+model DiscordNotification {
+  id        String    @id @default(cuid())
+  dedupeKey String    @unique // e.g. "draft.completed:<draftId>"
+  kind      String
+  channelId String?
+  payload   Json
+  status    String    @default("pending") // pending | sent | failed | skipped
+  attempts  Int       @default(0)
+  messageId String?
+  error     String?
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+
+  @@index([status])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Hero {
+  id        Int      @id // Deadlock hero id from assets API
+  name      String
+  imageUrl  String?
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+}
