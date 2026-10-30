@@ -48,7 +48,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   let heroes: Hero[] = [];
   let heroSource: 'deadlock-api' | 'database' | 'builtin' = 'builtin';
   async function loadHeroes() {
-    try { heroes = await fetchHeroes(cfg.DEADLOCK_ASSETS_URL); heroSource = 'deadlock-api'; await syncHeroes(db, heroes); return; }
+    try { heroes = await fetchHeroes(cfg.DEADLOCK_API_URL); heroSource = 'deadlock-api'; await syncHeroes(db, heroes); return; }
     catch (e) { app.log.warn(`hero assets unavailable: ${(e as Error).message}`); }
     const stored = await db.hero.findMany({ where: { isActive: true } });
     if (stored.length) { heroes = stored.map((h) => ({ id: h.id, name: h.name, imageUrl: h.imageUrl, simulated: false })); heroSource = 'database'; return; }

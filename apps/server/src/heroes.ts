@@ -1,16 +1,23 @@
 export interface Hero { id: number; name: string; imageUrl: string | null; simulated: boolean; heroType?: string | null }
 
 /**
- * Live roster: deadlock-api assets service (`GET {ASSETS_API_URL}/v2/heroes`, unverified from the
- * build sandbox — see docs/API_FEASIBILITY.md). Results are cached in memory and in the Hero table.
+ * Live roster from deadlock-api: `GET {DEADLOCK_API_URL}/v1/assets/heroes?only_active=true` (verified in the
+ * deadlock-api source, api/src/routes/v1/assets/heroes/route.rs; `only_active` hides disabled/in-development heroes).
+ * Portrait field names match deadlock-api's own HeroImage component (icon_hero_card_webp / icon_hero_card).
  */
-export async function fetchHeroes(assetsUrl: string, fetchImpl: typeof fetch = fetch): Promise<Hero[]> {
-  const res = await fetchImpl(`${assetsUrl}/v2/heroes?only_active=true`, { signal: AbortSignal.timeout(10_000) });
+export async function fetchHeroes(apiUrl: string, fetchImpl: typeof fetch = fetch): Promise<Hero[]> {
+  const res = await fetchImpl(`${apiUrl}/v1/assets/heroes?only_active=true`, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`Hero assets returned ${res.status}`);
-  const raw = (await res.json()) as Array<{ id: number; name: string; disabled?: boolean; in_development?: boolean; hero_type?: string | null; images?: Record<string, string> }>;
-  return raw
-    .filter((h) => !h.disabled && !h.in_development)
-    .map((h) => ({ id: h.id, name: h.name, imageUrl: h.images?.icon_hero_card ?? h.images?.icon_image_small ?? null, simulated: false, heroType: h.hero_type ?? null }));
+  const raw = (await res.json()) as Array<{ id: number; name: string; disabled?: boolean; in_development?: boolean; player_selectable?: boolean; hero_type?: string | null; images?: Record<string, string | null | undefined> }>;
+  if (!Array.isArray(raw)) throw new Error('Unexpected hero assets response');
+  const heroes = raw
+    .filter((h) => !h.disabled && !h.in_development && h.player_selectable !== false)
+    .map((h) => ({
+      id: h.id, name: h.name, simulated: false, heroType: h.hero_type ?? null,
+      imageUrl: h.images?.icon_hero_card_webp ?? h.images?.icon_hero_card ?? h.images?.top_bar_vertical_image ?? h.images?.icon_image_small ?? null,
+    }));
+  if (!heroes.length) throw new Error('Hero assets returned no heroes');
+  return heroes;
 }
 
 /**

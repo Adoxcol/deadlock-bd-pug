@@ -17,7 +17,6 @@ const schema = z.object({
   /** Public invite link shown on the landing page ("Join Discord"). */
   DISCORD_INVITE_URL: z.string().url().optional(),
   DEADLOCK_API_URL: z.string().url().default('https://api.deadlock-api.com'),
-  DEADLOCK_ASSETS_URL: z.string().url().default('https://assets.deadlock-api.com'),
   DEADLOCK_API_KEY: z.string().optional(),
   LIVE_EVENTS_URL: z.string().url().optional(),
   /** deadlock-api ServerRegion (snake_case), e.g. singapore, hong_kong, japan, eu_london. */
