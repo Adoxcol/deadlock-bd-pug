@@ -14,6 +14,7 @@ import StatusBadge from '../components/StatusBadge.vue';
 import PageState from '../components/PageState.vue';
 import SimBadge from '../components/SimBadge.vue';
 import OrderTimeline from '../components/draft/OrderTimeline.vue';
+import LobbyPanel from '../components/draft/LobbyPanel.vue';
 
 type Side = 'amber' | 'sapphire';
 const SIDES: Side[] = ['amber', 'sapphire'];
@@ -140,9 +141,9 @@ function lockIn() { if (selected.value !== null && s.value && myTurn.value) comm
 
 // ---- sharing ----
 const roomLink = computed(() => `${location.origin}/d/${rec.value?.code ?? ''}`);
+function flash(label: string) { notice.value = `${label} copied`; setTimeout(() => (notice.value = null), 2000); }
 async function copy(text: string, label: string) {
-  try { await navigator.clipboard.writeText(text); notice.value = `${label} copied`; } catch { notice.value = 'Copy failed — select and copy manually'; }
-  setTimeout(() => (notice.value = null), 2000);
+  try { await navigator.clipboard.writeText(text); flash(label); } catch { notice.value = 'Copy failed — select and copy manually'; setTimeout(() => (notice.value = null), 2000); }
 }
 const resultText = computed(() => {
   if (!s.value) return '';
@@ -414,6 +415,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               <p v-if="myTeam === t && !mySeat && s.assignments.find((a: any) => a.userId === me)" class="text-sm text-draft">You're playing {{ heroName(s.assignments.find((a: any) => a.userId === me).heroId) }}.</p>
             </section>
           </div>
+          <LobbyPanel v-if="!broadcast" :draft-id="rec.id" :can-create="!spectate && (!!mySeat || isMod)" :simulated="rec.simulated" @copied="flash" />
           <div class="flex flex-wrap justify-center gap-2">
             <button class="btn-ghost" @click="copy(resultText, 'Result')"><Copy class="w-4 h-4" />Copy result</button>
             <button class="btn-ghost" @click="copy(roomLink, 'Link')"><Link2 class="w-4 h-4" />Copy link</button>

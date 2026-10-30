@@ -259,25 +259,34 @@ model ExternalDraftLink {
 }
 
 model Match {
-  id              String             @id @default(cuid())
-  deadlockMatchId String?            @unique
-  partyId         String?
-  lobbyId         String?
-  pugId           String?
-  pug             PugSession?        @relation(fields: [pugId], references: [id])
-  draftId         String?
-  trackingState   TrackingState      @default(WAITING_FOR_MATCH)
-  trackingNote    String?
-  isSimulated     Boolean            @default(false)
-  startedAt       DateTime?
-  endedAt         DateTime?
-  durationSec     Int?
-  createdAt       DateTime           @default(now())
-  participants    MatchParticipant[]
-  events          MatchEvent[]
-  result          MatchResult?
+  id                 String             @id @default(cuid())
+  deadlockMatchId    String?            @unique
+  partyId            String?
+  lobbyId            String?
+  /// In-game join code for a lobby created by the deadlock-api bot.
+  partyCode          String?
+  /// sha256 of the callback secret deadlock-api signs its webhook with (X-Callback-Secret).
+  callbackSecretHash String?
+  /// The deadlock-api bot leaves 15 minutes after creating the lobby.
+  lobbyExpiresAt     DateTime?
+  lobbyCreatedById   String?
+  pugId              String?
+  pug                PugSession?        @relation(fields: [pugId], references: [id])
+  draftId            String?
+  trackingState      TrackingState      @default(WAITING_FOR_MATCH)
+  trackingNote       String?
+  isSimulated        Boolean            @default(false)
+  startedAt          DateTime?
+  endedAt            DateTime?
+  durationSec        Int?
+  createdAt          DateTime           @default(now())
+  participants       MatchParticipant[]
+  events             MatchEvent[]
+  result             MatchResult?
 
   @@index([trackingState])
+  @@index([partyId])
+  @@index([draftId])
 }
 
 model MatchParticipant {

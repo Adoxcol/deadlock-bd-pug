@@ -26,6 +26,8 @@ import { LiveManager } from './live/ingestor.js';
 import { simulateMatch } from './sim/simulator.js';
 import { Notifier, COLORS, type Sender } from './discord/notifier.js';
 import { providers, validateImport } from './draft/providers.js';
+import { LobbyService, LobbyError } from './lobby/service.js';
+import { parseCallbackMatchId, verifyCallbackSecret } from './lobby/callback.js';
 import type { DraftCommand, TeamSide } from './draft/types.js';
 
 declare module 'fastify' { interface FastifyRequest { user: User | null; sessionId: string | null } }
@@ -81,10 +83,38 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     hub.publish('dashboard', 'match.updated', { id });
   });
 
+  /** A Deadlock match is known to be running for this row: start live tracking and tell everyone. Idempotent. */
+  async function onMatchStarted(matchRowId: string) {
+    let m = await db.match.findUniqueOrThrow({ where: { id: matchRowId } });
+    if (!m.deadlockMatchId) return;
+    if (!['LIVE_AVAILABLE', 'LIVE_UNAVAILABLE', 'MATCH_COMPLETED', 'MATCH_DATA_PENDING'].includes(m.trackingState)) {
+      const started = live.start(m.id, m.deadlockMatchId);
+      m = await db.match.update({ where: { id: m.id }, data: {
+        trackingState: started ? 'LIVE_AVAILABLE' : 'LIVE_UNAVAILABLE', startedAt: m.startedAt ?? new Date(),
+        trackingNote: started ? 'Subscribed to live-events. Data for private custom matches is unverified and may not arrive.' : 'LIVE_EVENTS_URL not configured — live stats unavailable. Submit the result when the match ends.',
+      } });
+      await notifier.enqueue('match.started', `match.started:${m.id}`, { title: `Match ${m.deadlockMatchId} started`, url: `${cfg.PUBLIC_URL}/matches/${m.id}/live`, color: COLORS.teal }, m.isSimulated);
+    }
+    if (m.pugId) await db.pugSession.update({ where: { id: m.pugId }, data: { status: 'LIVE' } }).catch(() => {});
+    if (m.draftId) {
+      hub.publish(`draft:${m.draftId}`, 'draft.match', { matchId: m.id });
+      hub.publish(`draft:${m.draftId}`, 'draft.lobby', { ...lobbies.view(m), partyCode: null, partyId: null });
+    }
+    hub.publish('dashboard', 'match.updated', { id: m.id });
+  }
+  /** Match rows hold the party code (lets anyone into the game) and the webhook secret hash: never send those. */
+  const publicMatch = <T extends { partyCode?: string | null; callbackSecretHash?: string | null; lobbyCreatedById?: string | null }>(m: T) => {
+    const { partyCode: _c, callbackSecretHash: _h, lobbyCreatedById: _u, ...rest } = m; return rest;
+  };
+  const lobbies = new LobbyService(db, api, { publicUrl: cfg.PUBLIC_URL, region: cfg.DEADLOCK_LOBBY_REGION, log: app.log }, onMatchStarted);
+  lobbies.start();
+
   // ---------- Plugins ----------
   await app.register(cookie, { secret: cfg.SESSION_SECRET });
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute', ...(redis ? { redis } : {}) });
   await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
+  // deadlock-api's callback body format is undocumented; accept plain text as well as JSON.
+  app.addContentTypeParser('text/plain', { parseAs: 'string', bodyLimit: 4096 }, (_req, body, done) => done(null, body));
 
   async function loadUser(req: FastifyRequest) {
     req.user = null; req.sessionId = null;
@@ -99,7 +129,8 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   app.addHook('onRequest', async (req, reply) => {
     await loadUser(req);
     // CSRF: SameSite=Lax cookie + custom header that cross-site forms cannot set.
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.url.startsWith('/api/') && req.headers['x-dbd-csrf'] !== '1') {
+    // Webhooks come from servers, carry no cookies, and authenticate with their own secret.
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.url.startsWith('/api/') && !req.url.startsWith('/api/webhooks/') && req.headers['x-dbd-csrf'] !== '1') {
       return reply.code(403).send({ error: 'CSRF check failed' });
     }
   });
@@ -118,6 +149,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   app.setErrorHandler((err: Error, _req, reply) => {
     if (err instanceof DraftError) return reply.code(err.code === 'FORBIDDEN' ? 403 : 409).send({ error: err.message, code: err.code });
     if (err instanceof LockBusyError) return reply.code(503).send({ error: err.message });
+    if (err instanceof LobbyError) return reply.code(err.statusCode).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: 'Invalid input', issues: err.issues });
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) app.log.error(err);
@@ -241,7 +273,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const { id } = req.params as { id: string };
     const p = await db.pugSession.findUnique({ where: { id }, include: { teams: true, participants: { include: { user: true } }, draftRooms: true, externalDrafts: true, matches: true } });
     if (!p) throw Object.assign(new Error('PUG not found'), { statusCode: 404 });
-    return { ...p, participants: p.participants.map((x) => ({ ...x, user: publicUser(x.user) })) };
+    return {
+      ...p, participants: p.participants.map((x) => ({ ...x, user: publicUser(x.user) })), matches: p.matches.map(publicMatch),
+      draftRooms: p.draftRooms.map((d) => ({ id: d.id, code: d.code, name: d.name, status: d.status, createdAt: d.createdAt })),
+    };
   });
   app.post('/api/pugs/:id/participants', { preHandler: requireRole('MODERATOR') }, async (req) => {
     const { id } = req.params as { id: string };
@@ -360,6 +395,47 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     return DraftService.publicView(rec);
   });
 
+  // ---------- Deadlock custom lobby (via deadlock-api bot) ----------
+  /** The party code lets anyone into the game, so only captains, team players and moderators see it. */
+  const lobbyFor = (lobby: Awaited<ReturnType<typeof lobbies.forDraft>>, canJoin: boolean) => (lobby && !canJoin ? { ...lobby, partyCode: null, partyId: null } : lobby);
+  const inDraft = (rec: NonNullable<Awaited<ReturnType<typeof drafts.get>>>, u: User | null) =>
+    !!u && (isMod(u) || Object.values(rec.state.captains).includes(u.id) || rec.state.members.amber.includes(u.id) || rec.state.members.sapphire.includes(u.id));
+  app.get('/api/drafts/:id/lobby', async (req) => {
+    const { id } = req.params as { id: string };
+    const rec = await drafts.get(id);
+    if (!rec) throw Object.assign(new Error('Draft not found'), { statusCode: 404 });
+    return { lobby: lobbyFor(await lobbies.forDraft(id), inDraft(rec, req.user)) };
+  });
+  app.post('/api/drafts/:id/lobby', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 3, timeWindow: '1 minute' } } }, async (req) => {
+    const { id } = req.params as { id: string };
+    const rec = await drafts.get(id);
+    if (!rec) throw Object.assign(new Error('Draft not found'), { statusCode: 404 });
+    const isCaptain = Object.values(rec.state.captains).includes(req.user!.id);
+    if (!isCaptain && !isMod(req.user)) throw Object.assign(new Error('Only a captain or moderator can create the lobby'), { statusCode: 403 });
+    if (rec.state.status !== 'completed') throw Object.assign(new Error('Finish the draft first'), { statusCode: 409 });
+    // Serialize per draft so two captains clicking at once create one lobby.
+    const lock = redis ? new RedisLock(redis, 60_000, 50_000) : new MemoryLock();
+    const lobby = await lock.withLock(`lobby:${id}`, () => lobbies.create({ draftId: id, pugId: rec.pugId, createdById: req.user!.id, teamSize: TEAM_SIZE[rec.state.config.format], allowDuplicateHeroes: rec.state.config.allowMirrorPicks }));
+    await audit(db, req.user!.id, 'lobby.create', 'Match', lobby.matchRowId, null, { draftId: id, partyId: lobby.partyId });
+    hub.publish(`draft:${id}`, 'draft.lobby', lobbyFor(lobby, false)); // participants refetch to get the code
+    return { lobby };
+  });
+  // deadlock-api POSTs here when the match starts, and to /settings when lobby settings change.
+  app.post('/api/webhooks/deadlock-lobby/:id', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = await db.match.findUnique({ where: { id } });
+    if (!row || !verifyCallbackSecret(req.headers['x-callback-secret'], row.callbackSecretHash)) return reply.code(401).send({ error: 'Invalid callback' });
+    const matchId = parseCallbackMatchId(req.body);
+    if (!matchId) { app.log.warn({ body: req.body }, 'deadlock-api callback without a recognisable match id'); return reply.code(400).send({ error: 'No match id' }); }
+    await lobbies.attach(row.id, matchId, 'webhook');
+    return { ok: true };
+  });
+  app.post('/api/webhooks/deadlock-lobby/:id/settings', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const row = await db.match.findUnique({ where: { id: (req.params as { id: string }).id } });
+    if (!row || !verifyCallbackSecret(req.headers['x-callback-secret'], row.callbackSecretHash)) return reply.code(401).send({ error: 'Invalid callback' });
+    return { ok: true }; // lobby settings changes are not used yet
+  });
+
   // ---------- Tracker / Matches ----------
   app.post('/api/tracker/resolve', { preHandler: requireRole('MODERATOR'), config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
     const b = z.object({ identifier: z.string().min(1).max(40), type: z.enum(['auto', 'lobby', 'party', 'match']).default('auto'), pugId: z.string().optional(), draftId: z.string().optional() }).parse(req.body);
@@ -370,25 +446,19 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       match = out.matchId
         ? await db.match.upsert({ where: { deadlockMatchId: out.matchId }, create: { deadlockMatchId: out.matchId, ...data }, update: { ...data, pugId: b.pugId ?? undefined, draftId: b.draftId ?? undefined } })
         : await db.match.create({ data });
-      if (out.matchId && out.state === 'match_detected') {
-        const started = live.start(match.id, out.matchId);
-        const st = started ? 'LIVE_AVAILABLE' : 'LIVE_UNAVAILABLE';
-        const note = started ? 'Subscribed to live-events. Data for private custom matches is unverified and may not arrive.' : 'LIVE_EVENTS_URL not configured — live stats unavailable. Final results will be fetched after the match.';
-        match = await db.match.update({ where: { id: match.id }, data: { trackingState: st, trackingNote: note, startedAt: match.startedAt ?? new Date() } });
-      }
-      if (b.pugId) await db.pugSession.update({ where: { id: b.pugId }, data: { status: 'LIVE' } });
+      if (out.matchId && out.state === 'match_detected') { await onMatchStarted(match.id); match = await db.match.findUniqueOrThrow({ where: { id: match.id } }); }
       await audit(db, req.user!.id, 'match.track', 'Match', match.id, null, b);
       hub.publish('dashboard', 'match.updated', { id: match.id });
     }
-    return { resolution: out, match };
+    return { resolution: out, match: match && publicMatch(match) };
   });
-  app.get('/api/matches', async () => db.match.findMany({ orderBy: { createdAt: 'desc' }, take: 50, include: { result: true, pug: true } }));
+  app.get('/api/matches', async () => (await db.match.findMany({ orderBy: { createdAt: 'desc' }, take: 50, include: { result: true, pug: true } })).map(publicMatch));
   app.get('/api/matches/:id', async (req) => {
     const { id } = req.params as { id: string };
     const m = await db.match.findUnique({ where: { id }, include: { result: { include: { stats: true } }, pug: { include: { teams: true } }, participants: true } });
     if (!m) throw Object.assign(new Error('Match not found'), { statusCode: 404 });
     const draft = m.draftId ? await drafts.get(m.draftId) : null;
-    return { ...m, draft };
+    return { ...publicMatch(m), draft: draft && DraftService.publicView(draft) };
   });
   app.get('/api/matches/:id/live', async (req) => {
     const { id } = req.params as { id: string };
@@ -589,7 +659,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     });
   });
 
-  app.addHook('onClose', async () => { drafts.shutdown(); await db.$disconnect(); redis?.disconnect(); });
+  app.addHook('onClose', async () => { drafts.shutdown(); lobbies.stop(); await db.$disconnect(); redis?.disconnect(); });
   return { app, db, hub, drafts, createPug, leaderboardTop: async (n: number) => {
     const s = await db.season.findFirst({ where: { isActive: true } });
     if (!s) return [];

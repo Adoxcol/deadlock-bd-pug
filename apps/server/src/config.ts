@@ -18,6 +18,8 @@ const schema = z.object({
   DEADLOCK_ASSETS_URL: z.string().url().default('https://assets.deadlock-api.com'),
   DEADLOCK_API_KEY: z.string().optional(),
   LIVE_EVENTS_URL: z.string().url().optional(),
+  /** deadlock-api ServerRegion (snake_case), e.g. singapore, hong_kong, japan, eu_london. */
+  DEADLOCK_LOBBY_REGION: z.string().regex(/^[a-z_]+$/).default('singapore'),
   PUBLIC_LIVE_DELAY_SEC: z.coerce.number().default(120),
   SIMULATION_MODE: bool,
 });
