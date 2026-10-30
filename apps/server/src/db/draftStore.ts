@@ -1,14 +1,16 @@
 import type { PrismaClient, Prisma } from '@prisma/client';
 import type { DraftRecord, DraftStore } from '../draft/store.js';
 import { ConcurrencyError } from '../draft/store.js';
+import { upgradeState } from '../draft/engine.js';
 import type { DraftHistoryEntry, DraftState } from '../draft/types.js';
 import type { Hero } from '../heroes.js';
 
 const side = (t: 'amber' | 'sapphire'): 'AMBER' | 'SAPPHIRE' => (t === 'amber' ? 'AMBER' : 'SAPPHIRE');
-type Row = { id: string; name: string; pugId: string | null; amberName: string; sapphireName: string; visibility: string; isSimulated: boolean; state: Prisma.JsonValue };
+type Row = { id: string; code: string | null; name: string; pugId: string | null; amberName: string; sapphireName: string; visibility: string; isSimulated: boolean; state: Prisma.JsonValue };
 const toRecord = (r: Row): DraftRecord => ({
   id: r.id, name: r.name, pugId: r.pugId, teamNames: { amber: r.amberName, sapphire: r.sapphireName },
-  visibility: r.visibility === 'private' ? 'private' : 'public', simulated: r.isSimulated, state: r.state as unknown as DraftState,
+  visibility: r.visibility === 'private' ? 'private' : 'public', simulated: r.isSimulated, state: upgradeState(r.state as unknown as DraftState),
+  code: r.code,
 });
 
 export class PrismaDraftStore implements DraftStore {
@@ -16,7 +18,7 @@ export class PrismaDraftStore implements DraftStore {
   async get(id: string) { const r = await this.db.draftRoom.findUnique({ where: { id } }); return r ? toRecord(r) : null; }
   async create(rec: DraftRecord) {
     await this.db.draftRoom.create({ data: {
-      id: rec.id, name: rec.name, pugId: rec.pugId, amberName: rec.teamNames.amber, sapphireName: rec.teamNames.sapphire,
+      id: rec.id, code: rec.code, name: rec.name, pugId: rec.pugId, amberName: rec.teamNames.amber, sapphireName: rec.teamNames.sapphire,
       visibility: rec.visibility, isSimulated: rec.simulated, config: rec.state.config as unknown as Prisma.InputJsonValue,
       state: rec.state as unknown as Prisma.InputJsonValue, seq: rec.state.seq, status: rec.state.status, createdById: this.createdBy(),
     } });
@@ -40,6 +42,10 @@ export class PrismaDraftStore implements DraftStore {
         }
       }
     });
+  }
+  async getByCode(code: string) {
+    const r = await this.db.draftRoom.findFirst({ where: { code }, orderBy: { createdAt: 'desc' } });
+    return r ? toRecord(r) : null;
   }
   async listActive() { return (await this.db.draftRoom.findMany({ where: { status: { in: ['waiting', 'drafting', 'paused'] } } })).map(toRecord); }
   async listRecent(limit = 20) { return (await this.db.draftRoom.findMany({ orderBy: { createdAt: 'desc' }, take: limit })).map(toRecord); }

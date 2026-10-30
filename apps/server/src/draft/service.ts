@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { applyCommand, buildDefaultSequence, createDraftState, DraftError } from './engine.js';
 import type { Actor, DraftCommand, DraftConfig, DraftState, MatchFormat, TeamSide, TimeoutBehavior, TimerSeconds } from './types.js';
 import type { DraftRecord, DraftStore } from './store.js';
@@ -8,9 +8,13 @@ import type { Hub } from '../realtime/hub.js';
 export interface CreateDraftInput {
   name: string; pugId?: string | null; teamNames?: { amber: string; sapphire: string };
   format?: MatchFormat; bansPerTeam?: number; timerSeconds?: TimerSeconds; timeoutBehavior?: TimeoutBehavior;
-  allowMirrorPicks?: boolean; firstTeam?: TeamSide; sequence?: DraftConfig['sequence'];
-  captains: Record<TeamSide, string | null>; visibility?: 'public' | 'private'; simulated?: boolean;
+  allowMirrorPicks?: boolean; firstTeam?: TeamSide; banPhases?: 1 | 2; sequence?: DraftConfig['sequence'];
+  captains?: Record<TeamSide, string | null>; code?: string; visibility?: 'public' | 'private'; simulated?: boolean;
 }
+
+// No I/O/0/1 to avoid misreads when codes are read aloud on voice chat.
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export const generateRoomCode = () => Array.from({ length: 6 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('');
 
 export type DraftEventSink = (event: 'draft.started' | 'draft.completed', rec: DraftRecord) => void;
 
@@ -27,13 +31,13 @@ export class DraftService {
     const config: DraftConfig = {
       format, bansPerTeam: bans, timerSeconds: input.timerSeconds ?? 30, timeoutBehavior: input.timeoutBehavior ?? 'random',
       allowMirrorPicks: input.allowMirrorPicks ?? false,
-      sequence: input.sequence ?? buildDefaultSequence(format, bans, input.firstTeam ?? 'amber'),
+      sequence: input.sequence ?? buildDefaultSequence(format, bans, input.firstTeam ?? 'amber', input.banPhases ?? (format === '6v6' ? 2 : 1)),
     };
     const rec: DraftRecord = {
-      id: randomUUID(), name: input.name, pugId: input.pugId ?? null,
+      id: randomUUID(), code: input.code ?? generateRoomCode(), name: input.name, pugId: input.pugId ?? null,
       teamNames: input.teamNames ?? { amber: 'Team Amber', sapphire: 'Team Sapphire' },
       visibility: input.visibility ?? 'public', simulated: input.simulated ?? false,
-      state: createDraftState(config, input.captains),
+      state: createDraftState(config, input.captains ?? { amber: null, sapphire: null }),
     };
     await this.store.create(rec);
     this.hub.publish('dashboard', 'draft.created', { id: rec.id });
@@ -41,6 +45,9 @@ export class DraftService {
   }
 
   get(id: string) { return this.store.get(id); }
+
+  /** What clients may see. The hovered hero stays server-side so the other team can't read intent. */
+  static publicView(rec: DraftRecord): DraftRecord { return { ...rec, state: { ...rec.state, hover: null } }; }
 
   async execute(id: string, cmd: DraftCommand, actor: Actor | null): Promise<DraftRecord> {
     const rec = await this.lock.withLock(`draft:${id}`, async () => {
@@ -56,11 +63,23 @@ export class DraftService {
     });
     this.broadcast(rec);
     this.armTimer(rec);
+    if (rec.state.status === 'completed' && rec.state.rematchVotes.amber && rec.state.rematchVotes.sapphire) return this.rematch(rec);
     return rec;
   }
 
+  /** Both captains agreed: open a fresh room with the same code, settings, seats and players. The old draft stays as history. */
+  private async rematch(old: DraftRecord): Promise<DraftRecord> {
+    const next = await this.create({ name: old.name, pugId: old.pugId, teamNames: old.teamNames, visibility: old.visibility, simulated: old.simulated, code: old.code ?? undefined,
+      format: old.state.config.format, bansPerTeam: old.state.config.bansPerTeam, timerSeconds: old.state.config.timerSeconds,
+      timeoutBehavior: old.state.config.timeoutBehavior, allowMirrorPicks: old.state.config.allowMirrorPicks, sequence: old.state.config.sequence, captains: old.state.captains });
+    next.state.members = structuredClone(old.state.members);
+    await this.store.save(next.id, next.state.seq, next.state, []);
+    this.hub.publish(`draft:${old.id}`, 'draft.redirect', { id: next.id, code: next.code });
+    return next;
+  }
+
   broadcast(rec: DraftRecord) {
-    this.hub.publish(`draft:${rec.id}`, 'draft.state', rec);
+    this.hub.publish(`draft:${rec.id}`, 'draft.state', DraftService.publicView(rec));
     this.hub.publish('dashboard', 'draft.updated', { id: rec.id, status: rec.state.status });
   }
 

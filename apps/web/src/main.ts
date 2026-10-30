@@ -12,6 +12,7 @@ const router = createRouter({
     { path: '/login', component: () => import('./pages/Login.vue') },
     { path: '/drafts', component: () => import('./pages/Drafts.vue') },
     { path: '/drafts/new', component: () => import('./pages/NewDraft.vue') },
+    { path: '/d/:code', component: () => import('./pages/JoinDraft.vue'), props: true },
     { path: '/draft/:draftId', component: () => import('./pages/DraftRoom.vue'), props: (r) => ({ draftId: r.params.draftId, spectate: false }) },
     { path: '/draft/:draftId/spectate', component: () => import('./pages/DraftRoom.vue'), props: (r) => ({ draftId: r.params.draftId, spectate: true }) },
     { path: '/tracker', component: () => import('./pages/Tracker.vue') },

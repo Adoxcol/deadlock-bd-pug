@@ -169,6 +169,8 @@ model Team {
 
 model DraftRoom {
   id           String             @id @default(cuid())
+  /// Six-letter share code. A rematch creates a new room with the same code, so lookups take the newest.
+  code         String?
   pugId        String?
   pug          PugSession?        @relation(fields: [pugId], references: [id])
   name         String
@@ -189,6 +191,7 @@ model DraftRoom {
   bans         DraftBan[]
 
   @@index([status])
+  @@index([code, createdAt])
 }
 
 model DraftParticipant {

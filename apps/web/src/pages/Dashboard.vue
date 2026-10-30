@@ -42,7 +42,7 @@ const sessionStatus = (s: any) => s.match?.state ? s.match.state : s.draft?.stat
       </div>
       <div class="flex gap-2">
         <button v-if="session.me?.simulationMode && session.can('MODERATOR')" class="btn-ghost" :disabled="simBusy" @click="runSim"><FlaskConical class="w-4 h-4 text-warn" />Run simulated PUG</button>
-        <RouterLink v-if="session.can('CAPTAIN')" to="/drafts/new" class="btn-draft"><Swords class="w-4 h-4" />New draft</RouterLink>
+        <RouterLink v-if="session.can('PLAYER')" to="/drafts/new" class="btn-draft"><Swords class="w-4 h-4" />New draft</RouterLink>
       </div>
     </div>
 

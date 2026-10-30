@@ -18,6 +18,8 @@ export interface DraftConfig {
   sequence: DraftStep[];
 }
 
+export interface Assignment { team: TeamSide; heroId: number; userId: string }
+
 export interface DraftHistoryEntry {
   seq: number;
   step: number;
@@ -43,6 +45,14 @@ export interface DraftState {
   history: DraftHistoryEntry[];
   startedAt: number | null;
   completedAt: number | null;
+  /** Lobby: players (non-captains) who joined each side. */
+  members: Record<TeamSide, string[]>;
+  ready: Record<TeamSide, boolean>;
+  /** Hero the active captain is looking at; used by 'random' timeout. Not part of seq. */
+  hover: { team: TeamSide; heroId: number } | null;
+  rematchVotes: Record<TeamSide, boolean>;
+  /** Post-draft: which player plays which picked hero. */
+  assignments: Assignment[];
 }
 
 export type DraftCommand =
@@ -52,10 +62,21 @@ export type DraftCommand =
   | { kind: 'pause' }
   | { kind: 'resume' }
   | { kind: 'cancel' }
-  | { kind: 'correct'; historySeq: number; heroId: number };
+  | { kind: 'correct'; historySeq: number; heroId: number }
+  | { kind: 'skip'; expectedSeq: number }
+  | { kind: 'hover'; heroId: number | null }
+  | { kind: 'claimSeat'; team: TeamSide }
+  | { kind: 'leaveSeat' }
+  | { kind: 'swapSides' }
+  | { kind: 'setReady'; ready: boolean }
+  | { kind: 'joinTeam'; team: TeamSide | null }
+  | { kind: 'setTimeoutBehavior'; behavior: TimeoutBehavior }
+  | { kind: 'assign'; heroId: number; userId: string | null }
+  | { kind: 'voteRematch' };
 
 export interface Actor { userId: string; isModerator: boolean }
 
 export type DraftErrorCode =
   | 'NOT_ACTIVE' | 'NOT_YOUR_TURN' | 'FORBIDDEN' | 'STALE_SEQ' | 'HERO_UNKNOWN'
-  | 'HERO_UNAVAILABLE' | 'ALREADY_STARTED' | 'NOT_PAUSED' | 'INVALID_CORRECTION' | 'TIMER_NOT_EXPIRED' | 'NO_CAPTAINS';
+  | 'HERO_UNAVAILABLE' | 'ALREADY_STARTED' | 'NOT_PAUSED' | 'INVALID_CORRECTION' | 'TIMER_NOT_EXPIRED' | 'NO_CAPTAINS'
+  | 'SEAT_TAKEN' | 'NOT_CAPTAIN' | 'NOT_IN_LOBBY' | 'NOT_A_BAN' | 'NOT_COMPLETED' | 'INVALID_ASSIGNMENT' | 'LOGIN_REQUIRED';

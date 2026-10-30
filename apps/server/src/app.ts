@@ -277,17 +277,16 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     amberName: z.string().min(1).max(32).default('Team Amber'), sapphireName: z.string().min(1).max(32).default('Team Sapphire'),
     format: z.enum(['6v6', '4v4', '2v2']).default('6v6'), bansPerTeam: z.number().int().min(0).max(6).default(2),
     timerSeconds: z.union([z.literal(0), z.literal(30), z.literal(45), z.literal(60), z.literal(90)]).default(30),
-    timeoutBehavior: z.enum(['random', 'skip', 'pause']).default('random'), allowMirrorPicks: z.boolean().default(false),
-    firstTeam: z.enum(['amber', 'sapphire']).default('amber'),
+    timeoutBehavior: z.enum(['random', 'skip', 'pause']).default('skip'), allowMirrorPicks: z.boolean().default(false),
+    firstTeam: z.enum(['amber', 'sapphire']).default('amber'), banPhases: z.union([z.literal(1), z.literal(2)]).optional(),
     sequence: z.array(z.object({ team: z.enum(['amber', 'sapphire']), type: z.enum(['pick', 'ban']) })).max(40).optional(),
     amberCaptainId: z.string().nullable().default(null), sapphireCaptainId: z.string().nullable().default(null),
     visibility: z.enum(['public', 'private']).default('public'),
   });
-  app.post('/api/drafts', { preHandler: requireRole('CAPTAIN') }, async (req) => {
+  app.post('/api/drafts', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
     const b = createDraftBody.parse(req.body);
-    const mod = isMod(req.user);
-    // Captains may only create drafts where they captain one side.
-    if (!mod && b.amberCaptainId !== req.user!.id && b.sapphireCaptainId !== req.user!.id) throw Object.assign(new Error('Captains can only create drafts they captain'), { statusCode: 403 });
+    // Pre-assigning captains is a moderator tool; everyone else creates an open lobby and claims seats.
+    if (!isMod(req.user)) { b.amberCaptainId = null; b.sapphireCaptainId = null; }
     for (const cid of [b.amberCaptainId, b.sapphireCaptainId]) if (cid && !(await db.user.findUnique({ where: { id: cid } }))) throw Object.assign(new Error('Captain not found'), { statusCode: 400 });
     let rec;
     try {
@@ -299,25 +298,66 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     await audit(db, req.user!.id, 'draft.create', 'DraftRoom', rec.id, null, b);
     return rec;
   });
-  app.get('/api/drafts', async (req) => (await store.listRecent(30)).filter((d) => d.visibility === 'public' || isMod(req.user)).map((d) => ({ id: d.id, name: d.name, status: d.state.status, teamNames: d.teamNames, simulated: d.simulated })));
+  app.get('/api/drafts', async (req) => (await store.listRecent(30)).filter((d) => d.visibility === 'public' || isMod(req.user)).map((d) => ({ id: d.id, code: d.code, name: d.name, status: d.state.status, teamNames: d.teamNames, simulated: d.simulated })));
+  app.get('/api/drafts/code/:code', async (req) => {
+    const code = z.string().regex(/^[A-Za-z0-9]{6}$/).parse((req.params as { code: string }).code).toUpperCase();
+    const rec = await store.getByCode(code);
+    if (!rec) throw Object.assign(new Error('No draft room with that code'), { statusCode: 404 });
+    return { id: rec.id, code: rec.code };
+  });
+  /** Display names for everyone referenced by the draft (captains, players, assignment targets). */
+  async function draftPeople(rec: NonNullable<Awaited<ReturnType<typeof drafts.get>>>) {
+    const ids = new Set<string>([...Object.values(rec.state.captains), ...rec.state.members.amber, ...rec.state.members.sapphire].filter((x): x is string => !!x));
+    const parts = await db.draftParticipant.findMany({ where: { draftId: rec.id } });
+    const users = await db.user.findMany({ where: { id: { in: [...ids] } }, select: { id: true, displayName: true } });
+    const people: Record<string, string> = {};
+    for (const p of parts) people[p.userId] = p.displayNameSnapshot;
+    for (const u of users) people[u.id] = u.displayName;
+    return { people, participants: parts };
+  }
+  /** Keeps DraftParticipant rows (with name snapshots) in line with seats and team membership. */
+  async function syncParticipants(rec: NonNullable<Awaited<ReturnType<typeof drafts.get>>>) {
+    const s = rec.state;
+    const want = new Map<string, { team: 'AMBER' | 'SAPPHIRE'; isCaptain: boolean }>();
+    for (const t of ['amber', 'sapphire'] as const) {
+      if (s.captains[t]) want.set(s.captains[t]!, { team: toSide(t), isCaptain: true });
+      for (const m of s.members[t]) want.set(m, { team: toSide(t), isCaptain: false });
+    }
+    const users = await db.user.findMany({ where: { id: { in: [...want.keys()] } } });
+    await db.$transaction([
+      db.draftParticipant.deleteMany({ where: { draftId: rec.id, userId: { notIn: [...want.keys()] } } }),
+      ...users.map((u) => db.draftParticipant.upsert({ where: { draftId_userId: { draftId: rec.id, userId: u.id } }, create: { draftId: rec.id, userId: u.id, displayNameSnapshot: u.displayName, ...want.get(u.id)! }, update: want.get(u.id)! })),
+    ]);
+  }
   app.get('/api/drafts/:id', async (req) => {
     const { id } = req.params as { id: string };
     const rec = await drafts.get(id);
     if (!rec) throw Object.assign(new Error('Draft not found'), { statusCode: 404 });
-    const parts = await db.draftParticipant.findMany({ where: { draftId: id } });
-    return { ...rec, participants: parts, serverNow: Date.now(), you: req.user ? { id: req.user.id, isModerator: isMod(req.user) } : null };
+    return { ...DraftService.publicView(rec), ...(await draftPeople(rec)), serverNow: Date.now(), presence: presence(id), you: req.user ? { id: req.user.id, isModerator: isMod(req.user), displayName: req.user.displayName } : null };
   });
   const commandBody = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('start') }), z.object({ kind: z.literal('pause') }), z.object({ kind: z.literal('resume') }), z.object({ kind: z.literal('cancel') }),
     z.object({ kind: z.literal('select'), heroId: z.number().int(), expectedSeq: z.number().int().min(0) }),
     z.object({ kind: z.literal('correct'), historySeq: z.number().int(), heroId: z.number().int() }),
+    z.object({ kind: z.literal('skip'), expectedSeq: z.number().int().min(0) }),
+    z.object({ kind: z.literal('hover'), heroId: z.number().int().nullable() }),
+    z.object({ kind: z.literal('claimSeat'), team: z.enum(['amber', 'sapphire']) }),
+    z.object({ kind: z.literal('leaveSeat') }), z.object({ kind: z.literal('swapSides') }), z.object({ kind: z.literal('voteRematch') }),
+    z.object({ kind: z.literal('setReady'), ready: z.boolean() }),
+    z.object({ kind: z.literal('joinTeam'), team: z.enum(['amber', 'sapphire']).nullable() }),
+    z.object({ kind: z.literal('setTimeoutBehavior'), behavior: z.enum(['random', 'skip', 'pause']) }),
+    z.object({ kind: z.literal('assign'), heroId: z.number().int(), userId: z.string().nullable() }),
   ]);
+  const ROSTER_COMMANDS = new Set(['claimSeat', 'leaveSeat', 'swapSides', 'joinTeam']);
+  const AUDITED_COMMANDS = new Set(['start', 'pause', 'resume', 'cancel', 'correct']);
   app.post('/api/drafts/:id/command', { preHandler: requireRole('SPECTATOR'), config: { rateLimit: { max: 60, timeWindow: '10 seconds' } } }, async (req) => {
     const { id } = req.params as { id: string };
     const cmd = commandBody.parse(req.body) as DraftCommand;
     const rec = await drafts.execute(id, cmd, { userId: req.user!.id, isModerator: isMod(req.user) });
-    if (cmd.kind !== 'select') await audit(db, req.user!.id, `draft.${cmd.kind}`, 'DraftRoom', id, null, cmd);
-    return rec;
+    if (ROSTER_COMMANDS.has(cmd.kind) || rec.id !== id) await syncParticipants(rec);
+    if (ROSTER_COMMANDS.has(cmd.kind)) hub.publish(`draft:${rec.id}`, 'draft.people', (await draftPeople(rec)).people);
+    if (AUDITED_COMMANDS.has(cmd.kind)) await audit(db, req.user!.id, `draft.${cmd.kind}`, 'DraftRoom', id, null, cmd);
+    return DraftService.publicView(rec);
   });
 
   // ---------- Tracker / Matches ----------
@@ -507,21 +547,35 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   }
 
   // ---------- WebSocket ----------
+  /** Who is watching each draft (user ids of logged-in viewers; anonymous viewers are only counted). */
+  const draftViewers = new Map<string, Map<string, string | null>>();
+  function presence(draftId: string) {
+    const v = draftViewers.get(draftId);
+    return { watchers: v?.size ?? 0, online: [...new Set([...(v?.values() ?? [])].filter((x): x is string => !!x))] };
+  }
+  const announcePresence = (draftId: string) => hub.publish(`draft:${draftId}`, 'draft.presence', presence(draftId));
   app.get('/ws', { websocket: true }, (socket, req) => {
     const sub = { id: randomUUID(), send: (d: string) => socket.send(d) };
+    const watching = new Set<string>();
     socket.on('message', async (raw: Buffer) => {
       let msg: { op?: string; topic?: string };
       try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (typeof msg.topic !== 'string' || msg.topic.length > 100) return;
       const [kind, id, scope] = msg.topic.split(':');
-      if (msg.op === 'unsub') { hub.unsubscribe(msg.topic, sub); return; }
+      if (msg.op === 'unsub') {
+        hub.unsubscribe(msg.topic, sub);
+        if (kind === 'draft' && id && watching.delete(id)) { draftViewers.get(id)?.delete(sub.id); announcePresence(id); }
+        return;
+      }
       if (msg.op !== 'sub') return;
       if (kind === 'dashboard') hub.subscribe('dashboard', sub);
       else if (kind === 'draft' && id) {
         const rec = await drafts.get(id);
         if (!rec || (rec.visibility === 'private' && !req.user)) return socket.send(JSON.stringify({ type: 'error', topic: msg.topic, payload: 'Not allowed' }));
         hub.subscribe(msg.topic, sub);
-        socket.send(JSON.stringify({ type: 'draft.state', topic: msg.topic, payload: rec, serverNow: Date.now() })); // fresh snapshot on (re)subscribe
+        socket.send(JSON.stringify({ type: 'draft.state', topic: msg.topic, payload: DraftService.publicView(rec), serverNow: Date.now() })); // fresh snapshot on (re)subscribe
+        const viewers = draftViewers.get(id) ?? draftViewers.set(id, new Map()).get(id)!;
+        viewers.set(sub.id, req.user?.id ?? null); watching.add(id); announcePresence(id);
       } else if (kind === 'match' && id) {
         if (scope === 'mod' && !isMod(req.user)) return socket.send(JSON.stringify({ type: 'error', topic: msg.topic, payload: 'Moderators only' }));
         hub.subscribe(msg.topic, sub);
@@ -529,7 +583,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
         if (snap) socket.send(JSON.stringify({ type: 'live.state', topic: msg.topic, payload: snap, serverNow: Date.now() }));
       }
     });
-    socket.on('close', () => hub.unsubscribeAll(sub));
+    socket.on('close', () => {
+      hub.unsubscribeAll(sub);
+      for (const d of watching) { draftViewers.get(d)?.delete(sub.id); if (!draftViewers.get(d)?.size) draftViewers.delete(d); announcePresence(d); }
+    });
   });
 
   app.addHook('onClose', async () => { drafts.shutdown(); await db.$disconnect(); redis?.disconnect(); });
