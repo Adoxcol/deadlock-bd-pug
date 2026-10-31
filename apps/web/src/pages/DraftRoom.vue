@@ -8,6 +8,7 @@ import {
 } from 'lucide-vue-next';
 import { sfx, volume } from '../lib/sfx';
 import RevealSplash from '../components/draft/RevealSplash.vue';
+import TeamCrest, { FACTION } from '../components/draft/TeamCrest.vue';
 import { api, ApiError } from '../lib/api';
 import { realtime } from '../lib/ws';
 import { useHeroes } from '../stores/heroes';
@@ -282,15 +283,30 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
 
         <!-- ================= LOBBY ================= -->
         <template v-if="s.status === 'waiting'">
-          <p class="text-sm text-muted text-center">
-            <template v-if="!s.captains.amber || !s.captains.sapphire">Waiting for captains. Share the code <b class="font-mono text-text">{{ rec.code }}</b> or the link with the other captain.</template>
-            <template v-else>Both captains are in. Ready up and the draft starts.</template>
-          </p>
-          <div class="grid md:grid-cols-2 gap-4">
-            <section v-for="t in SIDES" :key="t" :class="['card p-4 space-y-4 border-t-2', teamBorder(t)]">
-              <h2 :class="['font-display text-2xl', teamText(t)]">{{ rec.teamNames[t] }}</h2>
+          <div class="text-center space-y-1">
+            <div class="font-mono text-[11px] font-bold uppercase tracking-[0.25em] text-muted">Room code</div>
+            <div class="font-display text-4xl tracking-[0.15em] text-primary">{{ rec.code }}</div>
+            <p class="text-sm text-muted">
+              <template v-if="!s.captains.amber || !s.captains.sapphire">Waiting for captains. Share the code or the link.</template>
+              <template v-else>Both captains are in. Ready up and the draft starts.</template>
+            </p>
+          </div>
+          <div class="relative grid md:grid-cols-2 gap-4 md:gap-10">
+            <div class="hidden md:grid absolute left-1/2 top-16 -translate-x-1/2 z-10 w-14 h-14 rotate-45 place-items-center border-2 border-primary/70 bg-bg shadow-[0_0_24px_-4px_rgba(212,162,76,.6)]">
+              <span class="-rotate-45 font-display text-xl text-primary">VS</span>
+            </div>
+            <section v-for="t in SIDES" :key="t" :class="['card overflow-hidden space-y-4 border-t-2 animate-fade-up', teamBorder(t),
+              t === 'amber' ? 'bg-gradient-to-b from-amber-team/[0.14] via-surface/90 to-surface/90' : 'bg-gradient-to-b from-sapphire-team/[0.14] via-surface/90 to-surface/90']">
+              <header :class="['relative flex items-center gap-4 px-4 pt-5', t === 'sapphire' && 'md:flex-row-reverse md:text-right']">
+                <TeamCrest :team="t" :size="72" :class="['shrink-0 drop-shadow-[0_0_14px_currentColor]', s.ready[t] && 'animate-glow rounded-full']" />
+                <div class="min-w-0">
+                  <div :class="['font-mono text-[11px] font-bold uppercase tracking-[0.25em] opacity-80', teamText(t)]">{{ FACTION[t] }}</div>
+                  <h2 :class="['font-display text-2xl xl:text-3xl leading-none truncate', teamText(t)]">{{ rec.teamNames[t] }}</h2>
+                </div>
+              </header>
+              <div class="px-4 pb-4 space-y-4">
               <!-- Captain seat -->
-              <div class="rounded-lg border border-line bg-bg/40 p-3 space-y-3">
+              <div class="rounded-lg border border-line bg-bg/50 p-3 space-y-3">
                 <div class="flex items-center gap-2">
                   <Crown class="w-4 h-4 text-warn" />
                   <span class="text-sm font-medium">Captain</span>
@@ -319,12 +335,13 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                     <button v-else class="btn-ghost !h-7 !px-2 ml-auto text-xs" :disabled="pending" @click="command({ kind: 'joinTeam', team: null })"><UserMinus class="w-3.5 h-3.5" />Leave team</button>
                   </template>
                 </div>
-                <ul class="flex flex-wrap gap-1.5">
-                  <li v-for="m in s.members[t]" :key="m" :class="['h-7 px-2 rounded-md border text-xs flex items-center gap-1.5', m === me ? 'border-draft/60' : 'border-line']">
-                    <span :class="['w-1.5 h-1.5 rounded-full', online(m) ? 'bg-accent' : 'bg-line']" />{{ nameOf(m) }}
+                <ul class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                  <li v-for="m in s.members[t]" :key="m" :class="['h-9 px-2.5 rounded border text-sm flex items-center gap-2 animate-fade-up bg-bg/40', m === me ? 'border-draft/70' : 'border-line']">
+                    <span :class="['w-1.5 h-1.5 rounded-full shrink-0', online(m) ? 'bg-accent' : 'bg-line']" /><span class="truncate">{{ nameOf(m) }}</span>
                   </li>
-                  <li v-if="!s.members[t].length" class="text-xs text-muted">No players yet — players join here so their captain can assign them a hero after the draft.</li>
+                  <li v-for="i in Math.max(0, teamSize - 1 - s.members[t].length)" :key="'open' + i" class="h-9 px-2.5 rounded border border-dashed border-line/70 text-xs text-muted/70 flex items-center font-mono uppercase tracking-wider">Open slot</li>
                 </ul>
+              </div>
               </div>
             </section>
           </div>
@@ -354,7 +371,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               :class="['card p-3 space-y-3 transition-shadow', team === 'amber' ? 'lg:order-1 border-amber-team/50 bg-gradient-to-b from-amber-team/[0.12] via-surface/90 to-surface/90' : 'lg:order-3 border-sapphire-team/50 bg-gradient-to-b from-sapphire-team/[0.12] via-surface/90 to-surface/90',
                 step?.team === team && s.status === 'drafting' ? (team === 'amber' ? 'shadow-[0_0_0_1px_#e8a33a,0_0_28px_-6px_#e8a33a]' : 'shadow-[0_0_0_1px_#5a8fe0,0_0_28px_-6px_#5a8fe0]') : '']">
               <div class="flex items-center gap-2.5">
-                <div :class="['w-9 h-9 rounded-lg grid place-items-center border', team === 'amber' ? 'border-amber-team/50 bg-amber-team/10 text-amber-team' : 'border-sapphire-team/50 bg-sapphire-team/10 text-sapphire-team']"><Crown class="w-4 h-4" /></div>
+                <TeamCrest :team="team" :size="40" class="shrink-0" />
                 <div class="min-w-0">
                   <h2 :class="['font-display text-xl leading-tight truncate', teamText(team)]">{{ rec.teamNames[team] }}</h2>
                   <p class="text-[11px] text-muted truncate">Captain: {{ nameOf(s.captains[team]) ?? 'Unassigned' }}</p>

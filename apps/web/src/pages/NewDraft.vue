@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { Swords, ExternalLink } from 'lucide-vue-next';
 import { api } from '../lib/api';
 import OrderTimeline from '../components/draft/OrderTimeline.vue';
+import TeamCrest, { FACTION } from '../components/draft/TeamCrest.vue';
 import { useSession } from '../stores/session';
 
 const router = useRouter();
@@ -42,54 +43,86 @@ async function submit() {
 }
 </script>
 <template>
-  <form class="max-w-3xl mx-auto space-y-4" @submit.prevent="submit">
-    <h1 class="text-2xl font-semibold tracking-tight">Create lobby</h1>
-    <div class="card p-5 space-y-4">
-      <div><span class="label">Draft provider</span>
-        <div class="grid sm:grid-cols-3 gap-2">
-          <label v-for="p in [{ v: 'NATIVE', l: 'Native Draft', d: 'Real-time, synced, stored automatically' }, { v: 'DEADLOCKLABS', l: 'Deadlock Labs', d: 'Link only · results entered manually' }, { v: 'EXTERNAL', l: 'External', d: 'Any URL · results entered manually' }]" :key="p.v"
-            :class="['rounded-lg border p-3 cursor-pointer', provider === p.v ? 'border-draft bg-draft/10' : 'border-line hover:bg-raised']">
-            <input v-model="provider" type="radio" :value="p.v" class="sr-only" :disabled="p.v !== 'NATIVE' && !session.can('MODERATOR')" />
-            <div class="text-sm font-medium">{{ p.l }}</div><div class="text-xs text-muted mt-0.5">{{ p.d }}</div>
-          </label>
+  <form class="max-w-5xl mx-auto space-y-5" @submit.prevent="submit">
+    <header class="text-center space-y-1 pt-2">
+      <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted">New PUG</div>
+      <h1 class="text-4xl sm:text-5xl text-text">Create lobby</h1>
+      <div class="rule-brass max-w-xs mx-auto mt-3" />
+    </header>
+
+    <!-- Factions -->
+    <div class="relative grid md:grid-cols-2 gap-4 md:gap-10">
+      <div class="hidden md:grid absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-14 h-14 rotate-45 place-items-center border-2 border-primary/70 bg-bg shadow-[0_0_24px_-4px_rgba(212,162,76,.6)]">
+        <span class="-rotate-45 font-display text-xl text-primary">VS</span>
+      </div>
+      <div v-for="t in (['amber', 'sapphire'] as const)" :key="t" :class="['card p-5 border-t-2 flex items-center gap-4', t === 'amber' ? 'md:pr-10 !border-t-amber-team bg-gradient-to-br from-amber-team/[0.14] to-surface/90' : 'md:pl-10 !border-t-sapphire-team bg-gradient-to-bl from-sapphire-team/[0.14] to-surface/90 md:flex-row-reverse']">
+        <TeamCrest :team="t" :size="76" class="shrink-0 drop-shadow-[0_0_14px_currentColor]" />
+        <div class="flex-1 min-w-0 space-y-1.5">
+          <label :for="t + 'n'" :class="['block font-mono text-[11px] font-bold uppercase tracking-[0.25em]', t === 'amber' ? 'text-amber-team' : 'text-sapphire-team md:text-right']">{{ FACTION[t] }}</label>
+          <input :id="t + 'n'" v-model="f[t === 'amber' ? 'amberName' : 'sapphireName']" maxlength="32"
+            :class="['w-full bg-transparent border-0 border-b-2 border-line focus:outline-none font-display text-xl xl:text-2xl uppercase pb-1', t === 'amber' ? 'focus:border-amber-team text-amber-team' : 'focus:border-sapphire-team text-sapphire-team md:text-right']" />
         </div>
       </div>
-      <div v-if="provider !== 'NATIVE'" class="space-y-2">
-        <label class="label" for="xurl">Draft room URL</label>
-        <input id="xurl" v-model="externalUrl" class="input" type="url" required :placeholder="provider === 'DEADLOCKLABS' ? 'https://deadlocklabs.gg/draft-pick/…' : 'https://…'" />
-        <p class="text-xs text-muted flex items-center gap-1"><ExternalLink class="w-3 h-3" />External drafts are not synchronized automatically — no supported API exists. A moderator imports final picks/bans after the draft.</p>
+    </div>
+
+    <div class="grid lg:grid-cols-[1fr_1.4fr] gap-4">
+      <!-- Provider -->
+      <div class="card-ornate p-5 space-y-4">
+        <h2 class="h-section">Draft provider</h2>
+        <div class="space-y-2">
+          <label v-for="p in [{ v: 'NATIVE', l: 'Native Draft', d: 'Real-time, synced, stored automatically' }, { v: 'DEADLOCKLABS', l: 'Deadlock Labs', d: 'Link only · results entered manually' }, { v: 'EXTERNAL', l: 'External', d: 'Any URL · results entered manually' }]" :key="p.v"
+            :class="['flex items-center gap-3 rounded border p-3 cursor-pointer transition-colors', provider === p.v ? 'border-primary bg-primary/10 shadow-[inset_3px_0_0_#d4a24c]' : 'border-line hover:bg-raised', p.v !== 'NATIVE' && !session.can('MODERATOR') && 'opacity-50 cursor-not-allowed']">
+            <input v-model="provider" type="radio" :value="p.v" class="sr-only" :disabled="p.v !== 'NATIVE' && !session.can('MODERATOR')" />
+            <span :class="['w-3 h-3 rotate-45 border-2 shrink-0', provider === p.v ? 'bg-primary border-primary' : 'border-line']" />
+            <div><div class="font-display uppercase tracking-wide">{{ p.l }}</div><div class="text-xs text-muted mt-0.5">{{ p.d }}</div></div>
+          </label>
+        </div>
+        <div v-if="provider !== 'NATIVE'" class="space-y-2">
+          <label class="label" for="xurl">Draft room URL</label>
+          <input id="xurl" v-model="externalUrl" class="input" type="url" required :placeholder="provider === 'DEADLOCKLABS' ? 'https://deadlocklabs.gg/draft-pick/…' : 'https://…'" />
+          <p class="text-xs text-muted flex items-start gap-1"><ExternalLink class="w-3 h-3 mt-0.5 shrink-0" />External drafts are not synchronized automatically — no supported API exists. A moderator imports final picks/bans after the draft.</p>
+        </div>
+        <div v-if="provider === 'NATIVE'"><label class="label" for="n">Draft name</label><input id="n" v-model="f.name" class="input" required maxlength="64" /></div>
+        <div><span class="label">Format</span>
+          <div class="grid grid-cols-3 gap-1.5">
+            <button v-for="x in ['6v6', '4v4', '2v2']" :key="x" type="button" :class="['h-11 rounded border font-display text-xl transition-colors', f.format === x ? 'border-primary bg-primary text-bg' : 'border-line text-muted hover:text-text hover:border-primary/40']" @click="f.format = x">{{ x }}</button>
+          </div>
+        </div>
       </div>
-      <div class="grid sm:grid-cols-2 gap-4">
-        <div v-if="provider === 'NATIVE'" class="sm:col-span-2"><label class="label" for="n">Draft name</label><input id="n" v-model="f.name" class="input" required maxlength="64" /></div>
-        <div><label class="label" for="an">Amber team name</label><input id="an" v-model="f.amberName" class="input" maxlength="32" /></div>
-        <div><label class="label" for="sn">Sapphire team name</label><input id="sn" v-model="f.sapphireName" class="input" maxlength="32" /></div>
-        <div><label class="label" for="fmt">Format</label><select id="fmt" v-model="f.format" class="input"><option>6v6</option><option>4v4</option><option>2v2</option></select></div>
-        <template v-if="provider === 'NATIVE'">
-          <div class="sm:col-span-2"><span class="label">Bans per team</span>
-            <div class="flex flex-wrap rounded-lg border border-line overflow-hidden w-fit">
-              <button v-for="n in [0, 1, 2, 3, 4, 5, 6]" :key="n" type="button" :class="['w-11 h-9 text-sm', f.bansPerTeam === n ? 'bg-raised text-text' : 'text-muted hover:text-text']" @click="f.bansPerTeam = n">{{ n === 0 ? 'Off' : n }}</button>
+
+      <!-- Rules -->
+      <div v-if="provider === 'NATIVE'" class="card-ornate p-5 space-y-4">
+        <h2 class="h-section">Rules</h2>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div><span class="label">Bans per team</span>
+            <div class="flex flex-wrap gap-1">
+              <button v-for="n in [0, 1, 2, 3, 4, 5, 6]" :key="n" type="button" :class="['w-9 h-9 rounded border font-mono text-sm font-bold', f.bansPerTeam === n ? 'border-danger bg-danger/20 text-text' : 'border-line text-muted hover:text-text']" @click="f.bansPerTeam = n">{{ n === 0 ? '–' : n }}</button>
             </div></div>
-          <div class="sm:col-span-2"><span class="label">Timer</span>
-            <div class="flex flex-wrap rounded-lg border border-line overflow-hidden w-fit">
-              <button v-for="t in [0, 30, 45, 60, 90]" :key="t" type="button" :class="['px-3 h-9 text-sm', f.timerSeconds === t ? 'bg-raised text-text' : 'text-muted hover:text-text']" @click="f.timerSeconds = t">{{ t === 0 ? 'Off' : `${t}s` }}</button>
+          <div><span class="label">Timer</span>
+            <div class="flex flex-wrap gap-1">
+              <button v-for="t in [0, 30, 45, 60, 90]" :key="t" type="button" :class="['px-2.5 h-9 rounded border font-mono text-sm font-bold', f.timerSeconds === t ? 'border-primary bg-primary/20 text-text' : 'border-line text-muted hover:text-text']" @click="f.timerSeconds = t">{{ t === 0 ? 'Off' : `${t}s` }}</button>
+            </div></div>
+          <div><span class="label">First pick/ban</span>
+            <div class="grid grid-cols-2 gap-1">
+              <button v-for="t in (['amber', 'sapphire'] as const)" :key="t" type="button" :class="['h-9 rounded border font-display uppercase text-sm truncate px-2', f.firstTeam === t ? (t === 'amber' ? 'border-amber-team bg-amber-team/20 text-amber-team' : 'border-sapphire-team bg-sapphire-team/20 text-sapphire-team') : 'border-line text-muted hover:text-text']" @click="f.firstTeam = t">{{ (t === 'amber' ? f.amberName : f.sapphireName) || t }}</button>
             </div></div>
           <div v-if="f.bansPerTeam >= 2"><label class="label" for="bp">Ban phases</label><select id="bp" v-model.number="f.banPhases" class="input"><option :value="2">Two phases (bans → picks → bans → picks)</option><option :value="1">One phase (all bans first)</option></select></div>
           <div><label class="label" for="to">When a ban timer runs out</label><select id="to" v-model="f.timeoutBehavior" class="input"><option value="skip">No ban (ban is lost)</option><option value="random">Ban the hero being looked at, else random</option><option value="pause">Pause for a moderator</option></select></div>
           <template v-if="session.can('MODERATOR')">
-          <div><label class="label" for="ac">Amber captain (optional)</label><select id="ac" v-model="f.amberCaptainId" class="input"><option value="">Open seat</option><option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }}</option></select></div>
-          <div><label class="label" for="sc">Sapphire captain (optional)</label><select id="sc" v-model="f.sapphireCaptainId" class="input"><option value="">Unassigned</option><option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }}</option></select></div>
+          <div><label class="label" for="ac">{{ f.amberName || 'Amber' }} captain</label><select id="ac" v-model="f.amberCaptainId" class="input"><option value="">Open seat</option><option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }}</option></select></div>
+          <div><label class="label" for="sc">{{ f.sapphireName || 'Sapphire' }} captain</label><select id="sc" v-model="f.sapphireCaptainId" class="input"><option value="">Open seat</option><option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }}</option></select></div>
           </template>
-          <div><label class="label" for="ft">First pick/ban</label><select id="ft" v-model="f.firstTeam" class="input"><option value="amber">Amber</option><option value="sapphire">Sapphire</option></select></div>
           <div><label class="label" for="vis">Visibility</label><select id="vis" v-model="f.visibility" class="input"><option value="public">Public — anyone can spectate</option><option value="private">Private — logged-in members only</option></select></div>
-          <label class="flex items-center gap-2 text-sm sm:col-span-2"><input v-model="f.allowMirrorPicks" type="checkbox" class="accent-[#a78bfa]" />Allow both teams to pick the same hero</label>
-        </template>
-      </div>
-      <div v-if="provider === 'NATIVE'"><span class="label">Draft order</span>
-        <OrderTimeline :sequence="orderPreview" :team-names="{ amber: f.amberName || 'Amber', sapphire: f.sapphireName || 'Sapphire' }" />
-        <p class="text-xs text-muted mt-2">After creating, share the code or link. Captains take a seat and ready up; players join a team so their captain can assign them a hero.</p>
+          <label class="flex items-center gap-2 text-sm sm:col-span-2"><input v-model="f.allowMirrorPicks" type="checkbox" class="accent-[#d4a24c]" />Allow both teams to pick the same hero</label>
+        </div>
       </div>
     </div>
+
+    <div v-if="provider === 'NATIVE'" class="card p-5 space-y-2"><h2 class="h-section">Draft order</h2>
+      <OrderTimeline :sequence="orderPreview" :team-names="{ amber: f.amberName || 'Amber', sapphire: f.sapphireName || 'Sapphire' }" />
+      <p class="text-xs text-muted">After creating, share the code or link. Captains take a seat and ready up; players join a team so their captain can assign them a hero.</p>
+    </div>
     <p v-if="err" class="text-sm text-danger" role="alert">{{ err }}</p>
-    <div class="flex justify-end gap-2"><RouterLink to="/drafts" class="btn-ghost">Cancel</RouterLink><button class="btn-draft" :disabled="busy"><Swords class="w-4 h-4" />Create lobby</button></div>
+    <div class="flex justify-end items-center gap-3"><RouterLink to="/drafts" class="btn-ghost">Cancel</RouterLink><button class="btn-draft !h-12 !px-8 !text-lg" :disabled="busy"><Swords class="w-5 h-5" />Create lobby</button></div>
   </form>
 </template>
