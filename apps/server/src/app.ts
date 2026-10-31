@@ -2,6 +2,9 @@ import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { PrismaClient, type User } from '@prisma/client';
@@ -110,6 +113,14 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   const publicMatch = <T extends { partyCode?: string | null; callbackSecretHash?: string | null; lobbyCreatedById?: string | null }>(m: T) => {
     const { partyCode: _c, callbackSecretHash: _h, lobbyCreatedById: _u, ...rest } = m; return rest;
   };
+  // Live tracking is in memory: after a restart, resume real matches and close out simulated ones (they can't resume).
+  for (const m of await db.match.findMany({ where: { trackingState: 'LIVE_AVAILABLE' } })) {
+    if (m.isSimulated || !m.deadlockMatchId) {
+      await db.match.update({ where: { id: m.id }, data: { trackingState: 'LIVE_UNAVAILABLE', trackingNote: 'Live tracking stopped when the server restarted.' } });
+    } else if (!live.start(m.id, m.deadlockMatchId)) {
+      await db.match.update({ where: { id: m.id }, data: { trackingState: 'LIVE_UNAVAILABLE', trackingNote: 'LIVE_EVENTS_URL not configured — live stats unavailable.' } });
+    }
+  }
   const lobbies = new LobbyService(db, api, { publicUrl: cfg.PUBLIC_URL, region: cfg.DEADLOCK_LOBBY_REGION, log: app.log }, onMatchStarted);
   lobbies.start();
 
@@ -482,10 +493,13 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       const result = await db.matchResult.findUniqueOrThrow({ where: { matchId: id } });
       const users = await db.user.findMany({ where: { id: { in: [...b.amber, ...b.sapphire] } } });
       const ls = live.get(id, true)?.state;
+      // Hero per player: live data if we have it, otherwise the captain's assignment from the linked draft.
+      const draftRec = m.draftId ? await drafts.get(m.draftId) : null;
+      const assigned = new Map((draftRec?.state.assignments ?? []).map((a) => [a.userId, a.heroId]));
       await db.playerStatistic.createMany({ data: users.map((u) => {
         const team = b.amber.includes(u.id) ? 'amber' : 'sapphire';
         const lp = ls ? Object.values(ls.players).find((p) => p.name === u.displayName) : undefined;
-        return { resultId: result.id, userId: u.id, team: toSide(team), won: team === b.winner, displayNameSnapshot: u.displayName, heroId: lp?.heroId ?? null, kills: lp?.kills ?? null, deaths: lp?.deaths ?? null, assists: lp?.assists ?? null, netWorth: lp?.netWorth ?? null, heroDamage: lp?.heroDamage ?? null };
+        return { resultId: result.id, userId: u.id, team: toSide(team), won: team === b.winner, displayNameSnapshot: u.displayName, heroId: lp?.heroId ?? assigned.get(u.id) ?? null, kills: lp?.kills ?? null, deaths: lp?.deaths ?? null, assists: lp?.assists ?? null, netWorth: lp?.netWorth ?? null, heroDamage: lp?.heroDamage ?? null };
       }), skipDuplicates: true });
       await db.match.update({ where: { id }, data: { trackingState: 'MATCH_COMPLETED' } });
       if (m.pugId) await db.pugSession.update({ where: { id: m.pugId }, data: { status: 'COMPLETED', completedAt: new Date() } });
@@ -664,6 +678,22 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       for (const d of watching) { draftViewers.get(d)?.delete(sub.id); if (!draftViewers.get(d)?.size) draftViewers.delete(d); announcePresence(d); }
     });
   });
+
+  // ---------- Website (production) ----------
+  // Serving the SPA from the same process means an image update always ships matching web files (no shared volume).
+  if (cfg.WEB_DIST_DIR) {
+    const root = resolve(cfg.WEB_DIST_DIR);
+    if (!existsSync(resolve(root, 'index.html'))) throw new Error(`WEB_DIST_DIR has no index.html: ${root}`);
+    await app.register(fastifyStatic, {
+      root, wildcard: false, index: false, cacheControl: false, // our setHeaders decides caching
+      // Hashed assets are immutable; index.html must always be revalidated so new deploys show up immediately.
+      setHeaders: (res, path) => res.setHeader('Cache-Control', path.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache'),
+    });
+    app.setNotFoundHandler((req, reply) => {
+      if (req.method !== 'GET' || req.url.startsWith('/api/') || req.url.startsWith('/ws')) return reply.code(404).send({ error: 'Not found' });
+      return reply.header('Cache-Control', 'no-cache').sendFile('index.html', { cacheControl: false });
+    });
+  }
 
   app.addHook('onClose', async () => { drafts.shutdown(); lobbies.stop(); await db.$disconnect(); redis?.disconnect(); });
   return { app, db, hub, drafts, createPug, leaderboardTop: async (n: number) => {

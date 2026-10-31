@@ -14,25 +14,39 @@ const panel = ref<HTMLUListElement | null>(null);
 const pos = ref({ left: 0, top: 0, width: 0, up: false });
 const current = computed(() => props.options.find((o) => o.value === props.modelValue));
 
+/**
+ * Position the panel from the button. Opening upward uses the panel's measured height rather than a CSS
+ * transform, because the panel's enter animation also animates `transform` and would override it.
+ */
 function place() {
   const r = btn.value!.getBoundingClientRect();
-  const up = r.bottom + 260 > window.innerHeight && r.top > 260;
-  pos.value = { left: r.left, top: up ? r.top - 6 : r.bottom + 6, width: r.width, up };
+  const h = panel.value?.offsetHeight ?? 260;
+  const up = r.bottom + Math.min(h, 260) > window.innerHeight && r.top > Math.min(h, 260);
+  let left = r.left;
+  const w = panel.value?.offsetWidth ?? r.width; // keep long labels inside the window
+  if (left + w > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - w);
+  pos.value = { left, top: up ? r.top - 6 - h : r.bottom + 6, width: r.width, up };
+}
+/** Follow the button when anything scrolls (layout shifts, animated pages); close only once it leaves the screen. */
+function onScroll(e: Event) {
+  if (panel.value?.contains(e.target as Node)) return;
+  const r = btn.value?.getBoundingClientRect();
+  if (!r || r.bottom < 0 || r.top > window.innerHeight) { close(); return; }
+  place();
 }
 function show() {
   if (props.disabled) return;
   place(); open.value = true;
   active.value = Math.max(0, props.options.findIndex((o) => o.value === props.modelValue));
   nextTick(() => {
-    const w = panel.value?.offsetWidth ?? 0; // keep long labels inside the window
-    if (pos.value.left + w > window.innerWidth - 8) pos.value.left = Math.max(8, window.innerWidth - 8 - w);
+    place(); // re-measure now that the panel exists
     panel.value?.children[active.value]?.scrollIntoView({ block: 'nearest' });
   });
-  window.addEventListener('pointerdown', outside, true); window.addEventListener('scroll', close, true); window.addEventListener('resize', close);
+  window.addEventListener('pointerdown', outside, true); window.addEventListener('scroll', onScroll, true); window.addEventListener('resize', close);
 }
 function close() {
   open.value = false;
-  window.removeEventListener('pointerdown', outside, true); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close);
+  window.removeEventListener('pointerdown', outside, true); window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', close);
 }
 function outside(e: Event) { const t = e.target as Node; if (!btn.value?.contains(t) && !panel.value?.contains(t)) close(); }
 function choose(i: number) { const o = props.options[i]; if (o) emit('update:modelValue', o.value); close(); btn.value?.focus(); }
@@ -60,7 +74,7 @@ onBeforeUnmount(close);
   <Teleport to="body">
     <ul v-if="open" ref="panel" role="listbox"
       class="fixed z-[70] max-h-64 overflow-auto py-1 rounded border border-primary/50 bg-surface shadow-[0_18px_40px_-12px_rgba(0,0,0,.9),0_0_0_1px_rgba(0,0,0,.6)] animate-fade-up"
-      :style="{ left: pos.left + 'px', top: pos.top + 'px', minWidth: pos.width + 'px', transform: pos.up ? 'translateY(-100%)' : undefined }">
+      :style="{ left: pos.left + 'px', top: pos.top + 'px', minWidth: pos.width + 'px' }">
       <li v-for="(o, i) in options" :key="String(o.value)" role="option" :aria-selected="o.value === modelValue"
         :class="['relative flex items-center gap-2 pl-7 pr-3 py-2 text-sm cursor-pointer whitespace-nowrap', i === active ? 'bg-primary/15 text-text' : 'text-text/85',
           o.value === modelValue && 'text-primary font-semibold']"

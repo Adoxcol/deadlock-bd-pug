@@ -23,6 +23,8 @@ const schema = z.object({
   DEADLOCK_LOBBY_REGION: z.string().regex(/^[a-z_]+$/).default('singapore'),
   PUBLIC_LIVE_DELAY_SEC: z.coerce.number().default(120),
   SIMULATION_MODE: bool,
+  /** Built web app (apps/web/dist). When set, the server also serves the website, so one container ships both. */
+  WEB_DIST_DIR: z.string().optional(),
 });
 
 export type Config = z.infer<typeof schema>;

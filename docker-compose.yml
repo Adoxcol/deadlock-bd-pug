@@ -7,13 +7,12 @@ services:
       REDIS_URL: redis://redis:6379
       TRUST_PROXY: "true"
     depends_on: { db: { condition: service_healthy }, redis: { condition: service_healthy } }
-    volumes: [webdist:/app/web]
     restart: unless-stopped
   caddy:
     image: caddy:2
     ports: ["80:80", "443:443"]
     environment: { DOMAIN: "${DOMAIN}" }
-    volumes: [./deploy/Caddyfile:/etc/caddy/Caddyfile:ro, webdist:/srv/web:ro, caddy_data:/data]
+    volumes: [./deploy/Caddyfile:/etc/caddy/Caddyfile:ro, caddy_data:/data]
     depends_on: [app]
     restart: unless-stopped
   db:
@@ -32,4 +31,4 @@ services:
     profiles: ["live"]
     environment: { DEADLOCK_API_KEY: "${DEADLOCK_API_KEY:-}" }
     restart: unless-stopped
-volumes: { pgdata: {}, webdist: {}, caddy_data: {} }
+volumes: { pgdata: {}, caddy_data: {} }
