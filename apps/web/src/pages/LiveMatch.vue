@@ -7,7 +7,8 @@ import { duration, dateShort } from '../lib/format';
 import { useHeroes } from '../stores/heroes';
 import { useSession } from '../stores/session';
 import StatusBadge from '../components/StatusBadge.vue';
-import HeroPortrait from '../components/HeroPortrait.vue';
+import HeroCard from '../components/HeroCard.vue';
+import TeamCrest from '../components/draft/TeamCrest.vue';
 import Metric from '../components/Metric.vue';
 import PageState from '../components/PageState.vue';
 import SimBadge from '../components/SimBadge.vue';
@@ -32,7 +33,9 @@ const status = computed(() => {
   return ts ?? 'waiting';
 });
 const stale = computed(() => !!live.value?.stale || (lastUpdate.value !== null && now.value - lastUpdate.value > 15_000 && !st.value?.completed));
-const teamName = (t: number) => (t === 2 ? match.value?.pug?.teams?.find((x: any) => x.side === 'AMBER')?.name ?? 'Team Amber' : match.value?.pug?.teams?.find((x: any) => x.side === 'SAPPHIRE')?.name ?? 'Team Sapphire');
+/** Deadlock team numbers: 2 = Amber (Hidden King), 3 = Sapphire (Archmother). */
+const sideOf = (t: number) => (t === 2 ? 'amber' : 'sapphire') as 'amber' | 'sapphire';
+const teamName = (t: number) => match.value?.draft?.teamNames?.[sideOf(t)] ?? match.value?.pug?.teams?.find((x: any) => x.side === sideOf(t).toUpperCase())?.name ?? (t === 2 ? 'Team Amber' : 'Team Sapphire');
 const players = (t: number) => Object.values(st.value?.players ?? {}).filter((p: any) => p.team === t).sort((a: any, b: any) => (b.kills ?? 0) - (a.kills ?? 0)) as any[];
 const icon = (k: string) => ({ kill: Skull, objective: Castle, pause: Pause, resume: Play, end: Flag } as any)[k];
 
@@ -59,40 +62,58 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
 <template>
   <PageState :loading="!match && !error" :error="!match ? error : null">
     <div v-if="match" class="space-y-4">
-      <header class="card p-4 flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div>
-          <div class="flex items-center gap-2 flex-wrap"><h1 class="text-xl font-semibold">Match {{ match.deadlockMatchId ?? match.id.slice(-6) }}</h1><StatusBadge :status="status" /><SimBadge v-if="match.isSimulated" /></div>
-          <p class="text-xs text-muted mt-1">PUG #{{ match.pug?.number ?? '—' }} · <span class="text-amber-team">{{ teamName(2) }}</span> vs <span class="text-sapphire-team">{{ teamName(3) }}</span></p>
+      <!-- Header -->
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="min-w-0">
+          <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted">{{ match.pug ? `PUG #${match.pug.number}` : 'Match' }} · Live</div>
+          <div class="flex items-center gap-2 flex-wrap mt-1"><h1 class="text-3xl sm:text-4xl leading-none">Match {{ match.deadlockMatchId ?? match.id.slice(-6) }}</h1><StatusBadge :status="status" /><SimBadge v-if="match.isSimulated" /></div>
         </div>
-        <div class="flex items-center gap-6 sm:ml-auto text-sm">
-          <div class="text-center"><div class="text-xs text-muted">Score</div><div class="text-2xl font-semibold tabular-nums"><span class="text-amber-team">{{ st?.teams?.['2']?.score ?? '–' }}</span> <span class="text-muted">:</span> <span class="text-sapphire-team">{{ st?.teams?.['3']?.score ?? '–' }}</span></div></div>
-          <div><div class="text-xs text-muted">Game time</div><div class="font-semibold tabular-nums">{{ duration(st?.gameTime) }}</div></div>
-          <div><div class="text-xs text-muted">Last update</div><div class="font-medium flex items-center gap-1" :class="stale ? 'text-warn' : ''"><Clock class="w-3.5 h-3.5" />{{ lastUpdate ? `${Math.round((now - lastUpdate) / 1000)}s ago` : 'never' }}</div></div>
-          <div><div class="text-xs text-muted">Spectator delay</div><div class="font-medium">{{ live?.publicDelaySec ? `${live.publicDelaySec}s (public)` : modView ? 'None (moderator)' : 'Unknown' }}</div></div>
+        <div class="ml-auto flex flex-wrap items-center gap-2">
+          <button v-if="session.can('MODERATOR')" class="btn-ghost !h-9" @click="toggleView"><ShieldCheck class="w-4 h-4" />{{ modView ? 'Moderator view' : 'Public view' }}</button>
+          <RouterLink v-if="status === 'completed' || session.can('MODERATOR')" :to="`/matches/${matchId}`" class="btn-primary !h-9">{{ status === 'completed' ? 'Results' : 'Submit result' }}</RouterLink>
         </div>
-      </header>
+      </div>
 
+      <!-- Score banner -->
+      <section class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-6 border border-line/70 px-4 sm:px-6 py-4 bg-[linear-gradient(90deg,rgba(232,163,58,.16),rgba(14,12,10,.6)_42%,rgba(14,12,10,.6)_58%,rgba(90,143,224,.16))]">
+        <div v-for="(t, i) in [2, 3]" :key="t" :class="['flex items-center gap-3 min-w-0', i === 1 && 'order-3 flex-row-reverse text-right']">
+          <TeamCrest :team="sideOf(t)" :size="44" class="shrink-0 hidden sm:block" />
+          <div class="min-w-0">
+            <div :class="['font-display text-lg sm:text-2xl uppercase truncate', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</div>
+            <div class="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-muted">{{ players(t).length }} players</div>
+          </div>
+          <div :class="['font-display text-5xl sm:text-6xl tabular-nums leading-none', i === 1 ? 'mr-auto' : 'ml-auto', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ st?.teams?.[String(t)]?.score ?? '–' }}</div>
+        </div>
+        <div class="order-2 text-center">
+          <div class="font-display text-2xl tabular-nums">{{ duration(st?.gameTime) }}</div>
+          <div class="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-muted">Game time</div>
+        </div>
+      </section>
+
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-1 font-mono text-[11px] uppercase tracking-wider text-muted">
+        <span :class="['flex items-center gap-1.5', stale && status !== 'completed' && 'text-warn']"><Clock class="w-3.5 h-3.5" />Updated {{ lastUpdate ? `${Math.round((now - lastUpdate) / 1000)}s ago` : 'never' }}</span>
+        <span>Spectator delay: {{ live?.publicDelaySec ? `${live.publicDelaySec}s (public)` : modView ? 'none (moderator)' : 'unknown' }}</span>
+        <span v-if="match.trackingNote" class="normal-case tracking-normal font-sans text-xs">{{ match.trackingNote }}</span>
+      </div>
       <div v-if="stale && status !== 'completed'" class="card border-warn/40 px-4 py-2 text-sm text-warn flex items-center gap-2" role="status"><AlertTriangle class="w-4 h-4" />Data may be stale — no update received in over 15 seconds.</div>
-      <div v-if="match.trackingNote" class="text-xs text-muted">{{ match.trackingNote }}</div>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="flex rounded-lg border border-line overflow-hidden text-sm">
-          <button v-for="t in (['scoreboard', 'timeline', 'draft'] as const)" :key="t" :class="['px-3 h-9 capitalize', tab === t ? 'bg-raised' : 'text-muted hover:text-text']" @click="tab = t">{{ t }}</button>
-        </div>
-        <button v-if="session.can('MODERATOR')" class="btn-ghost !h-9 ml-auto" @click="toggleView"><ShieldCheck class="w-4 h-4" />{{ modView ? 'Moderator view (full, real-time)' : 'Public view (delayed, redacted)' }}</button>
-        <RouterLink v-if="status === 'completed'" :to="`/matches/${matchId}`" class="btn-primary !h-9">Results</RouterLink>
+      <!-- Tabs -->
+      <div class="flex gap-1 border-b border-line">
+        <button v-for="t in (['scoreboard', 'timeline', 'draft'] as const)" :key="t" :aria-pressed="tab === t"
+          :class="['px-4 h-10 -mb-px border-b-2 font-display uppercase tracking-wider text-sm', tab === t ? 'border-primary text-text' : 'border-transparent text-muted hover:text-text']" @click="tab = t">{{ t }}</button>
       </div>
 
       <PageState v-if="tab === 'scoreboard'" :empty="!st" :empty-text="match.trackingState === 'LIVE_UNAVAILABLE' ? 'Live statistics are unavailable for this match.' : !modView ? 'Waiting for delayed public data…' : 'Waiting for live data…'">
         <div class="grid xl:grid-cols-2 gap-4">
-          <section v-for="t in [2, 3]" :key="t" :class="['card overflow-hidden border-t-2', t === 2 ? '!border-t-amber-team' : '!border-t-sapphire-team']">
-            <h2 :class="['px-4 py-2.5 font-semibold', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</h2>
+          <section v-for="t in [2, 3]" :key="t" :class="['card-ornate overflow-hidden border-t-2', t === 2 ? '!border-t-amber-team' : '!border-t-sapphire-team']">
+            <h2 :class="['px-4 pt-3 pb-2 text-lg', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</h2>
             <div class="overflow-x-auto">
               <table class="w-full table-compact">
                 <thead><tr><th>Player</th><th class="text-right">K</th><th class="text-right">D</th><th class="text-right">A</th><th class="text-right" title="Unspent souls are not exposed by the live data source">Souls</th><th class="text-right">Net worth</th><th class="text-right">Hero dmg</th></tr></thead>
                 <tbody>
-                  <tr v-for="p in players(t)" :key="p.entityIndex">
-                    <td><div class="flex items-center gap-2 min-w-[150px]"><HeroPortrait :name="heroes.byId(p.heroId)?.name ?? '?'" :src="heroes.byId(p.heroId)?.imageUrl" size="sm" /><div class="min-w-0"><div class="font-medium truncate max-w-[140px]">{{ p.name ?? 'Unknown' }}</div><div class="text-[11px] text-muted">{{ heroes.byId(p.heroId)?.name ?? 'Unknown hero' }}</div></div></div></td>
+                  <tr v-for="p in players(t)" :key="p.entityIndex" class="hover:bg-raised/50">
+                    <td><div class="flex items-center gap-2.5 min-w-[160px]"><HeroCard size="xs" :name="heroes.byId(p.heroId)?.name ?? '?'" :src="heroes.byId(p.heroId)?.imageUrl" />
+                      <div class="min-w-0"><div class="font-semibold truncate max-w-[140px]">{{ p.name ?? 'Unknown' }}</div><div class="font-mono text-[10px] uppercase tracking-wider text-muted">{{ heroes.byId(p.heroId)?.name ?? 'Unknown hero' }}</div></div></div></td>
                     <td class="text-right"><Metric :value="p.kills" /></td><td class="text-right"><Metric :value="p.deaths" /></td><td class="text-right"><Metric :value="p.assists" /></td>
                     <td class="text-right"><Metric :value="p.souls" reason="Not exposed by deadlock-api live-events" /></td>
                     <td class="text-right"><Metric :value="p.netWorth" :reason="modView ? undefined : 'Hidden in public view during the match'" /></td>
@@ -105,31 +126,31 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
         </div>
       </PageState>
 
-      <section v-else-if="tab === 'timeline'" class="card p-4">
+      <section v-else-if="tab === 'timeline'" class="card-ornate p-4">
         <PageState :empty="!st?.timeline?.length" empty-text="No timeline events yet.">
-          <ol class="space-y-1.5 max-h-[60vh] overflow-y-auto">
-            <li v-for="e in [...st.timeline].reverse()" :key="e.key" class="flex items-center gap-3 text-sm">
-              <span class="w-12 text-xs text-muted tabular-nums">{{ duration(e.gameTime) }}</span>
-              <component :is="icon(e.kind)" class="w-4 h-4 text-muted" />
-              <span v-if="e.kind === 'kill'">{{ st.players[e.detail.attacker]?.name ?? 'Someone' }} killed {{ st.players[e.detail.victim]?.name ?? 'someone' }}</span>
-              <span v-else-if="e.kind === 'objective'">Objective destroyed ({{ e.detail.type.replace(/_/g, ' ') }})</span>
-              <span v-else class="capitalize">{{ e.kind === 'end' ? 'Match completed' : `Game ${e.kind}d` }}</span>
+          <ol class="space-y-1 max-h-[60vh] overflow-y-auto">
+            <li v-for="e in [...st.timeline].reverse()" :key="e.key" class="flex items-center gap-3 text-sm py-1 border-b border-line/40 animate-fade-up">
+              <span class="w-12 font-mono text-xs text-muted tabular-nums">{{ duration(e.gameTime) }}</span>
+              <component :is="icon(e.kind)" :class="['w-4 h-4', e.kind === 'kill' ? 'text-danger' : e.kind === 'objective' ? 'text-primary' : 'text-muted']" />
+              <span v-if="e.kind === 'kill'"><b>{{ st.players[e.detail.attacker]?.name ?? 'Someone' }}</b> killed <b>{{ st.players[e.detail.victim]?.name ?? 'someone' }}</b></span>
+              <span v-else-if="e.kind === 'objective'">Objective destroyed <span class="text-muted">({{ e.detail.type.replace(/_/g, ' ') }})</span></span>
+              <span v-else>{{ e.kind === 'end' ? 'Match completed' : `Game ${e.kind}d` }}</span>
             </li>
           </ol>
         </PageState>
       </section>
 
-      <section v-else class="card p-4">
+      <section v-else class="card-ornate p-4">
         <PageState :empty="!match.draft" empty-text="No native draft linked to this match.">
-          <div class="grid sm:grid-cols-2 gap-4">
+          <div class="grid sm:grid-cols-2 gap-5">
             <div v-for="team in (['amber', 'sapphire'] as const)" :key="team">
-              <h3 :class="['font-semibold mb-2', team === 'amber' ? 'text-amber-team' : 'text-sapphire-team']">{{ match.draft.teamNames[team] }}</h3>
-              <div class="flex flex-wrap gap-2 mb-2"><div v-for="h in match.draft.state.picks[team]" :key="h" class="flex items-center gap-1.5 text-sm"><HeroPortrait :name="heroes.byId(h)?.name" :src="heroes.byId(h)?.imageUrl" size="sm" />{{ heroes.byId(h)?.name }}</div></div>
-              <div class="text-xs text-muted">Bans: {{ match.draft.state.bans[team].map((h: number) => heroes.byId(h)?.name).join(', ') || 'none' }}</div>
+              <h3 :class="['text-lg mb-2', team === 'amber' ? 'text-amber-team' : 'text-sapphire-team']">{{ match.draft.teamNames[team] }}</h3>
+              <div class="grid grid-cols-6 gap-1.5 mb-2"><HeroCard v-for="h in match.draft.state.picks[team]" :key="h" :name="heroes.byId(h)?.name" :src="heroes.byId(h)?.imageUrl" /></div>
+              <div class="font-mono text-[11px] uppercase tracking-wider text-muted">Bans: {{ match.draft.state.bans[team].map((h: number) => heroes.byId(h)?.name).join(', ') || 'none' }}</div>
             </div>
           </div>
-          <p class="text-xs text-muted mt-3">Provider: Native Draft · Duration {{ duration(match.draft.state.completedAt && match.draft.state.startedAt ? (match.draft.state.completedAt - match.draft.state.startedAt) / 1000 : null) }} · Started {{ match.draft.state.startedAt ? dateShort(new Date(match.draft.state.startedAt).toISOString()) : '—' }}
-            · <RouterLink :to="`/draft/${match.draft.id}`" class="text-accent hover:underline">Full pick order</RouterLink></p>
+          <p class="text-xs text-muted mt-4">Native draft · {{ duration(match.draft.state.completedAt && match.draft.state.startedAt ? (match.draft.state.completedAt - match.draft.state.startedAt) / 1000 : null) }} · started {{ match.draft.state.startedAt ? dateShort(new Date(match.draft.state.startedAt).toISOString()) : '—' }}
+            · <RouterLink :to="`/draft/${match.draft.id}`" class="text-primary hover:underline">Full pick order</RouterLink></p>
         </PageState>
       </section>
     </div>

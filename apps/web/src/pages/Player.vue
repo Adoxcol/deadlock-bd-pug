@@ -1,66 +1,136 @@
 <script setup lang="ts">
-import UiSelect from '../components/UiSelect.vue';
 import { computed, onMounted, ref, watch } from 'vue';
-import { Link2, Eye } from 'lucide-vue-next';
+import { Link2, Eye, ChevronRight } from 'lucide-vue-next';
+import UiSelect from '../components/UiSelect.vue';
 import { api } from '../lib/api';
-import { dateShort, pct } from '../lib/format';
+import { pct, timeAgo } from '../lib/format';
 import { useSession } from '../stores/session';
+import { useHeroes } from '../stores/heroes';
 import PageState from '../components/PageState.vue';
 import Metric from '../components/Metric.vue';
 import SimBadge from '../components/SimBadge.vue';
+import StatTile from '../components/StatTile.vue';
+import HeroCard from '../components/HeroCard.vue';
+
 const props = defineProps<{ playerId: string }>();
 const session = useSession();
+const heroes = useHeroes();
 const p = ref<any>(null);
 const error = ref<string | null>(null);
+const tab = ref<'overview' | 'matches' | 'heroes' | 'rating'>('overview');
 async function load() { p.value = null; error.value = null; try { p.value = await api(`/players/${props.playerId}`); } catch (e) { error.value = (e as Error).message; } }
-onMounted(load); watch(() => props.playerId, load);
+onMounted(() => { heroes.load().catch(() => {}); load(); });
+watch(() => props.playerId, load);
+
 const self = computed(() => session.user?.id === props.playerId);
 const current = computed(() => p.value?.ratings?.find((r: any) => r.season.isActive));
+const name = computed(() => p.value?.user.displayName ?? '');
+const initial = computed(() => name.value.replace('[SIM] ', '').charAt(0).toUpperCase());
+/** Heroes by matches played, with wins, from the recent match history. */
 const favorites = computed(() => {
-  const c = new Map<string, number>(); for (const h of p.value?.history ?? []) if (h.heroName) c.set(h.heroName, (c.get(h.heroName) ?? 0) + 1);
-  return [...c].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const c = new Map<number, { n: number; w: number }>();
+  for (const h of p.value?.history ?? []) if (h.heroId != null) { const x = c.get(h.heroId) ?? { n: 0, w: 0 }; x.n++; if (h.won) x.w++; c.set(h.heroId, x); }
+  return [...c].sort((a, b) => b[1].n - a[1].n).slice(0, 8);
 });
+const recentForm = computed(() => (p.value?.history ?? []).slice(0, 10).map((h: any) => h.won as boolean));
 const spark = computed(() => {
-  const xs = (p.value?.ratingHistory ?? []).map((t: any) => t.after as number); if (xs.length < 2) return '';
+  const xs = (p.value?.ratingHistory ?? []).map((t: any) => t.after as number); if (xs.length < 2) return null;
   const min = Math.min(...xs), max = Math.max(...xs), span = max - min || 1;
-  return xs.map((v: number, i: number) => `${(i / (xs.length - 1)) * 300},${60 - ((v - min) / span) * 56 - 2}`).join(' ');
+  return { min, max, points: xs.map((v: number, i: number) => `${(i / (xs.length - 1)) * 300},${70 - ((v - min) / span) * 62 - 4}`).join(' ') };
 });
 async function setVis(v: string) { await api('/me/visibility', { method: 'PATCH', body: { visibility: v } }); await load(); }
+const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id));
 </script>
+
 <template>
   <PageState :loading="!p && !error" :error="error">
-    <div v-if="p" class="space-y-4">
-      <header class="card p-5 flex flex-wrap items-center gap-4">
-        <div class="w-14 h-14 rounded-xl bg-raised border border-line grid place-items-center text-xl font-semibold">{{ p.user.displayName.replace('[SIM] ', '')[0] }}</div>
-        <div class="min-w-0"><h1 class="text-xl font-semibold flex items-center gap-2">{{ p.user.displayName }}<SimBadge v-if="p.user.isSimulated" /></h1>
-          <p class="text-xs text-muted mt-1">{{ p.user.role.toLowerCase() }} · Discord: {{ p.discord?.username ?? 'not linked' }} · Steam: {{ p.steam ? 'linked' : 'not linked' }}</p></div>
-        <div class="flex gap-6 sm:ml-auto text-sm">
-          <div><div class="text-xs text-muted">Rating</div><div class="text-2xl font-semibold tabular-nums">{{ current?.rating ?? '—' }}</div></div>
-          <div><div class="text-xs text-muted">Record</div><div class="font-semibold tabular-nums">{{ current ? `${current.wins}W ${current.losses}L` : '—' }}</div></div>
-          <div><div class="text-xs text-muted">Win rate</div><div class="font-semibold">{{ current?.gamesPlayed ? pct(current.wins / current.gamesPlayed) : '—' }}</div></div>
+    <div v-if="p" class="max-w-6xl mx-auto space-y-5">
+      <!-- Profile header -->
+      <header class="card-ornate p-5 flex flex-wrap items-center gap-5 bg-[linear-gradient(110deg,rgba(212,162,76,.10),transparent_45%)]">
+        <div class="w-20 h-20 shrink-0 grid place-items-center border-2 border-primary/60 bg-bg rotate-45">
+          <span class="-rotate-45 font-display text-3xl text-primary">{{ initial }}</span>
+        </div>
+        <div class="min-w-0">
+          <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted">{{ p.user.role }}</div>
+          <h1 class="text-3xl sm:text-4xl leading-none flex items-center gap-2 flex-wrap mt-1">{{ name }}<SimBadge v-if="p.user.isSimulated" /></h1>
+          <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 font-mono text-[11px] uppercase tracking-wider text-muted">
+            <span>Discord: <span class="text-text normal-case">{{ p.discord?.username ?? 'not linked' }}</span></span>
+            <span>Steam: <span class="text-text">{{ p.steam ? 'linked' : 'not linked' }}</span></span>
+          </div>
+          <div v-if="recentForm.length" class="flex gap-1 mt-3" :aria-label="`Recent form: ${recentForm.map((w: boolean) => (w ? 'W' : 'L')).join(' ')}`">
+            <span v-for="(w, i) in recentForm" :key="i" :class="['w-5 h-5 grid place-items-center font-mono text-[10px] font-bold', w ? 'bg-accent/20 text-accent' : 'bg-danger/20 text-danger']">{{ w ? 'W' : 'L' }}</span>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:ml-auto w-full sm:w-auto">
+          <StatTile label="Rating" :value="current?.rating?.toLocaleString()" />
+          <StatTile label="Wins" :value="current?.wins" tone="win" />
+          <StatTile label="Losses" :value="current?.losses" tone="loss" />
+          <StatTile label="Win rate" :value="current?.gamesPlayed ? pct(current.wins / current.gamesPlayed) : null" />
         </div>
       </header>
-      <div v-if="self" class="card p-4 flex flex-wrap items-center gap-3 text-sm">
-        <a v-if="!p.steam" href="/api/auth/steam" class="btn-ghost"><Link2 class="w-4 h-4" />Link Steam account</a>
-        <span class="flex items-center gap-2 text-muted"><Eye class="w-4 h-4" />Profile visibility</span>
-        <UiSelect :model-value="p.visibility" class="!w-40" :options="[{ value: 'PUBLIC', label: 'Public' }, { value: 'MEMBERS', label: 'Members only' }, { value: 'PRIVATE', label: 'Private' }]" @update:model-value="setVis" />
+
+      <div v-if="self" class="card p-3 flex flex-wrap items-center gap-3 text-sm">
+        <a v-if="!p.steam" href="/api/auth/steam" class="btn-ghost !h-9"><Link2 class="w-4 h-4" />Link Steam account</a>
+        <span class="flex items-center gap-2 text-muted ml-auto"><Eye class="w-4 h-4" />Profile visibility</span>
+        <UiSelect :model-value="p.visibility" class="!w-44" aria-label="Profile visibility" :options="[{ value: 'PUBLIC', label: 'Public' }, { value: 'MEMBERS', label: 'Members only' }, { value: 'PRIVATE', label: 'Private' }]" @update:model-value="setVis" />
       </div>
-      <div class="grid lg:grid-cols-3 gap-4">
-        <section class="card p-4 lg:col-span-2"><h2 class="h-section mb-3">Rating history</h2>
-          <PageState :empty="!spark" empty-text="Not enough rated matches yet."><svg viewBox="0 0 300 60" class="w-full h-24" preserveAspectRatio="none" role="img" aria-label="Rating over time"><polyline :points="spark" fill="none" stroke="#2dd4bf" stroke-width="1.5" vector-effect="non-scaling-stroke" /></svg></PageState>
-        </section>
-        <section class="card p-4"><h2 class="h-section mb-3">Favorite heroes</h2>
-          <PageState :empty="!favorites.length" empty-text="No hero data yet."><ul class="space-y-1.5 text-sm"><li v-for="[h, n] in favorites" :key="h" class="flex justify-between"><span>{{ h }}</span><span class="text-muted tabular-nums">{{ n }}</span></li></ul></PageState>
-        </section>
+
+      <div class="flex gap-1 border-b border-line overflow-x-auto">
+        <button v-for="t in (['overview', 'matches', 'heroes', 'rating'] as const)" :key="t" :aria-pressed="tab === t"
+          :class="['px-4 h-10 -mb-px border-b-2 font-display uppercase tracking-wider text-sm shrink-0', tab === t ? 'border-primary text-text' : 'border-transparent text-muted hover:text-text']" @click="tab = t">{{ t === 'rating' ? 'Rating history' : t }}</button>
       </div>
-      <section class="card overflow-x-auto"><h2 class="h-section px-4 pt-4 pb-2">Match history</h2>
+
+      <!-- Matches (overview shows the latest five) -->
+      <section v-if="tab === 'overview' || tab === 'matches'" class="card-ornate overflow-hidden">
+        <h2 class="h-section px-4 pt-4 pb-2">{{ tab === 'overview' ? 'Recent matches' : 'Match history' }}</h2>
         <PageState :empty="!p.history.length" empty-text="No matches yet.">
-          <table class="w-full table-compact"><thead><tr><th>Date</th><th>Result</th><th>Hero</th><th class="text-right">K/D/A</th><th></th></tr></thead>
-            <tbody><tr v-for="h in p.history" :key="h.id"><td class="text-muted">{{ dateShort(h.result.createdAt) }}</td>
-              <td :class="h.won ? 'text-accent' : 'text-danger'">{{ h.won ? 'Win' : 'Loss' }}<span v-if="h.result.source !== 'API'" class="text-[10px] text-warn ml-1 uppercase">{{ h.result.source.toLowerCase() }}</span></td>
-              <td>{{ h.heroName ?? '—' }}</td><td class="text-right tabular-nums"><Metric :value="h.kills" />/<Metric :value="h.deaths" />/<Metric :value="h.assists" /></td>
-              <td class="text-right"><RouterLink :to="`/matches/${h.result.matchId}`" class="text-xs text-accent hover:underline">Details</RouterLink></td></tr></tbody></table>
+          <ul class="divide-y divide-line/60">
+            <li v-for="h in (tab === 'overview' ? p.history.slice(0, 5) : p.history)" :key="h.id">
+              <RouterLink :to="`/matches/${h.result.matchId}`" class="flex items-center gap-3 px-4 py-2.5 hover:bg-raised/50">
+                <HeroCard size="xs" :name="h.heroName ?? '?'" :src="heroOf(h.heroId)?.imageUrl" />
+                <span :class="['w-12 font-display uppercase', h.won ? 'text-accent' : 'text-danger']">{{ h.won ? 'Win' : 'Loss' }}</span>
+                <span class="min-w-0 flex-1"><span class="block truncate">{{ h.heroName ?? 'Unknown hero' }}</span>
+                  <span v-if="h.result.source !== 'API'" class="font-mono text-[10px] uppercase tracking-wider text-warn">{{ h.result.source.toLowerCase() }}</span></span>
+                <span class="font-mono text-sm tabular-nums"><Metric :value="h.kills" /> / <Metric :value="h.deaths" /> / <Metric :value="h.assists" /></span>
+                <span class="hidden sm:block w-28 text-right text-xs text-muted">{{ timeAgo(h.result.createdAt) }}</span>
+                <ChevronRight class="w-4 h-4 text-muted" />
+              </RouterLink>
+            </li>
+          </ul>
         </PageState>
+      </section>
+
+      <!-- Heroes -->
+      <section v-if="tab === 'overview' || tab === 'heroes'" class="card-ornate p-4">
+        <h2 class="h-section mb-3">Most played heroes</h2>
+        <PageState :empty="!favorites.length" empty-text="No hero data yet.">
+          <div class="grid grid-cols-4 sm:grid-cols-8 gap-2">
+            <div v-for="[id, f] in favorites" :key="id" class="space-y-1">
+              <HeroCard :name="heroOf(id)?.name ?? `#${id}`" :src="heroOf(id)?.imageUrl" />
+              <div class="text-center font-mono text-[10px] uppercase tracking-wider text-muted">{{ f.n }} played · {{ pct(f.w / f.n) }}</div>
+            </div>
+          </div>
+        </PageState>
+      </section>
+
+      <!-- Rating -->
+      <section v-if="tab === 'overview' || tab === 'rating'" class="card-ornate p-4">
+        <h2 class="h-section mb-3">Rating history</h2>
+        <PageState :empty="!spark" empty-text="Not enough rated matches yet.">
+          <div v-if="spark" class="flex gap-3">
+            <div class="flex flex-col justify-between font-mono text-[10px] text-muted tabular-nums py-1"><span>{{ spark.max }}</span><span>{{ spark.min }}</span></div>
+            <svg viewBox="0 0 300 70" class="w-full h-28" preserveAspectRatio="none" role="img" aria-label="Rating over time">
+              <polyline :points="spark.points" fill="none" stroke="#d4a24c" stroke-width="2" vector-effect="non-scaling-stroke" />
+            </svg>
+          </div>
+        </PageState>
+        <div v-if="tab === 'rating' && p.ratings.length" class="mt-4 grid sm:grid-cols-3 gap-2">
+          <div v-for="r in p.ratings" :key="r.id" class="card px-3 py-2">
+            <div class="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{{ r.season.name }}</div>
+            <div class="font-display text-xl tabular-nums">{{ r.rating }}</div>
+            <div class="text-xs text-muted">{{ r.wins }}W {{ r.losses }}L</div>
+          </div>
+        </div>
       </section>
     </div>
   </PageState>

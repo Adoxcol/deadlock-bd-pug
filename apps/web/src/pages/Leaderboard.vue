@@ -1,10 +1,16 @@
 <script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue';
+import { Search, Crown } from 'lucide-vue-next';
 import UiSelect from '../components/UiSelect.vue';
-import { onMounted, ref, watch } from 'vue';
 import { api } from '../lib/api';
 import { pct } from '../lib/format';
 import PageState from '../components/PageState.vue';
+import PageHeader from '../components/PageHeader.vue';
 import SimBadge from '../components/SimBadge.vue';
+import HeroCard from '../components/HeroCard.vue';
+import { useHeroes } from '../stores/heroes';
+
+const heroes = useHeroes();
 const data = ref<any>(null);
 const seasons = ref<any[]>([]);
 const error = ref<string | null>(null);
@@ -15,38 +21,61 @@ async function load() {
   try { data.value = await api(`/leaderboard?minMatches=${minMatches.value}${seasonId.value ? `&seasonId=${seasonId.value}` : ''}`); error.value = null; }
   catch (e) { error.value = (e as Error).message; }
 }
-onMounted(async () => { seasons.value = await api('/seasons').catch(() => []) as any[]; load(); });
+onMounted(async () => { heroes.load().catch(() => {}); seasons.value = await api('/seasons').catch(() => []) as any[]; load(); });
 watch([seasonId, minMatches], load);
 const avg = (x: number | null | undefined) => (x == null ? '—' : x.toFixed(1));
+const heroByName = (n: string | null) => (n ? heroes.list.find((h) => h.name === n) : undefined);
+const rows = computed(() => (data.value?.rows ?? []).filter((r: any) => !hero.value || (r.mostPlayedHero ?? '').toLowerCase().includes(hero.value.toLowerCase())));
+// Podium order: 2nd, 1st, 3rd.
+const podium = computed(() => (hero.value ? [] : [rows.value[1], rows.value[0], rows.value[2]].filter(Boolean)));
+const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ...seasons.value.map((s: any) => ({ value: s.id as string, label: `${s.name}${s.isArchived ? ' (archived)' : ''}` }))]);
 </script>
+
 <template>
-  <div class="space-y-4">
-    <div class="flex flex-wrap items-end gap-3">
-      <div><h1 class="text-2xl font-semibold tracking-tight">Leaderboard</h1><p class="text-sm text-muted mt-1 flex items-center gap-2">{{ data?.season?.name ?? 'No active season' }}<SimBadge v-if="data?.season?.isSimulated" /></p></div>
-      <div class="flex flex-wrap gap-2 sm:ml-auto">
-        <UiSelect v-model="seasonId" class="!w-48" aria-label="Season" :options="[{ value: '', label: 'Current season' }, ...seasons.map((s) => ({ value: s.id, label: s.name + (s.isArchived ? ' (archived)' : '') }))]" />
-        <UiSelect v-model="minMatches" class="!w-40" aria-label="Minimum matches" :options="[{ value: 0, label: 'Any matches' }, { value: 5, label: '5+ matches' }, { value: 10, label: '10+ matches' }]" />
-        <input v-model="hero" class="input !w-36" placeholder="Most-played hero" aria-label="Hero filter" />
-      </div>
+  <div class="max-w-6xl mx-auto space-y-5">
+    <PageHeader eyebrow="Community rankings" title="Leaderboard" :subtitle="data?.season?.name ?? 'No active season'">
+      <SimBadge v-if="data?.season?.isSimulated" />
+    </PageHeader>
+
+    <div class="flex flex-wrap gap-2">
+      <UiSelect v-model="seasonId" class="!w-56" aria-label="Season" :options="seasonOptions" />
+      <UiSelect v-model="minMatches" class="!w-44" aria-label="Minimum matches" :options="[{ value: 0, label: 'Any matches' }, { value: 5, label: '5+ matches' }, { value: 10, label: '10+ matches' }]" />
+      <label class="relative flex-1 min-w-[180px] max-w-xs"><span class="sr-only">Filter by most-played hero</span>
+        <Search class="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" /><input v-model="hero" class="input !pl-9" placeholder="Most-played hero" />
+      </label>
     </div>
-    <div class="card overflow-x-auto">
-      <PageState :loading="!data && !error" :error="error" :empty="data && !data.rows.filter((r: any) => !hero || (r.mostPlayedHero ?? '').toLowerCase().includes(hero.toLowerCase())).length" empty-text="No players match these filters.">
+
+    <PageState :loading="!data && !error" :error="error" :empty="data && !rows.length" empty-text="No players match these filters.">
+      <!-- Podium -->
+      <div v-if="podium.length" class="grid grid-cols-3 gap-3 items-end">
+        <RouterLink v-for="r in podium" :key="r.userId" :to="`/players/${r.userId}`"
+          :class="['card-ornate flex flex-col items-center text-center px-3 transition-colors hover:border-primary/50', r.rank === 1 ? 'py-6 border-primary/50 bg-[linear-gradient(180deg,rgba(212,162,76,.14),transparent)]' : 'py-4']">
+          <Crown v-if="r.rank === 1" class="w-6 h-6 text-primary mb-1" />
+          <div :class="['font-display leading-none', r.rank === 1 ? 'text-5xl text-primary' : 'text-3xl text-muted']">{{ r.rank }}</div>
+          <div class="w-12 sm:w-14 my-3"><HeroCard :name="r.mostPlayedHero ?? r.displayName" :src="heroByName(r.mostPlayedHero)?.imageUrl" /></div>
+          <div class="font-display uppercase truncate max-w-full text-sm sm:text-base">{{ r.displayName }}</div>
+          <div class="font-display text-2xl tabular-nums text-text mt-1">{{ r.rating.toLocaleString() }}</div>
+          <div class="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{{ r.wins }}W · {{ r.losses }}L · {{ pct(r.winRate) }}</div>
+        </RouterLink>
+      </div>
+
+      <div class="card-ornate overflow-x-auto">
         <table class="w-full table-compact">
-          <thead><tr><th>#</th><th>Player</th><th class="text-right">Rating</th><th class="text-right">W</th><th class="text-right">L</th><th class="text-right">Win rate</th><th class="text-right hidden sm:table-cell">Matches</th><th class="text-right hidden md:table-cell">Avg K/D/A</th><th class="hidden md:table-cell">Most played</th></tr></thead>
+          <thead><tr><th class="w-12">#</th><th>Player</th><th class="text-right">Rating</th><th class="text-right">W</th><th class="text-right">L</th><th class="text-right">Win rate</th><th class="text-right hidden sm:table-cell">Matches</th><th class="text-right hidden md:table-cell">Avg K/D/A</th><th class="hidden md:table-cell">Most played</th></tr></thead>
           <tbody>
-            <tr v-for="r in data.rows.filter((r: any) => !hero || (r.mostPlayedHero ?? '').toLowerCase().includes(hero.toLowerCase()))" :key="r.userId" class="hover:bg-raised/50">
-              <td class="tabular-nums font-semibold" :class="r.rank <= 3 ? 'text-warn' : 'text-muted'">{{ r.rank }}</td>
-              <td><RouterLink :to="`/players/${r.userId}`" class="font-medium hover:text-accent">{{ r.displayName }}</RouterLink></td>
-              <td class="text-right font-semibold tabular-nums">{{ r.rating }}</td>
+            <tr v-for="r in rows" :key="r.userId" class="hover:bg-raised/50">
+              <td><span :class="['font-display text-lg tabular-nums', r.rank === 1 ? 'text-primary' : r.rank <= 3 ? 'text-text' : 'text-muted']">{{ r.rank }}</span></td>
+              <td><RouterLink :to="`/players/${r.userId}`" class="font-semibold hover:text-primary">{{ r.displayName }}</RouterLink></td>
+              <td class="text-right font-display text-base tabular-nums">{{ r.rating.toLocaleString() }}</td>
               <td class="text-right tabular-nums text-accent">{{ r.wins }}</td><td class="text-right tabular-nums text-danger">{{ r.losses }}</td>
               <td class="text-right tabular-nums">{{ pct(r.winRate) }}</td><td class="text-right tabular-nums hidden sm:table-cell">{{ r.matches }}</td>
-              <td class="text-right tabular-nums hidden md:table-cell">{{ avg(r.avg?.kills) }} / {{ avg(r.avg?.deaths) }} / {{ avg(r.avg?.assists) }}</td>
-              <td class="hidden md:table-cell">{{ r.mostPlayedHero ?? '—' }}</td>
+              <td class="text-right tabular-nums hidden md:table-cell font-mono text-xs">{{ avg(r.avg?.kills) }} / {{ avg(r.avg?.deaths) }} / {{ avg(r.avg?.assists) }}</td>
+              <td class="hidden md:table-cell"><div v-if="r.mostPlayedHero" class="flex items-center gap-2"><HeroCard size="xs" :name="r.mostPlayedHero" :src="heroByName(r.mostPlayedHero)?.imageUrl" />{{ r.mostPlayedHero }}</div><span v-else class="text-muted">—</span></td>
             </tr>
           </tbody>
         </table>
-      </PageState>
-    </div>
-    <p class="text-xs text-muted">Team Elo: every player on a team gains or loses the same amount based on the average rating gap. K/D/A never changes rating. Only verified results are rated.</p>
+      </div>
+    </PageState>
+    <p class="text-xs text-muted">Team Elo: everyone on a team gains or loses the same amount, based on the average rating gap. K/D/A never changes rating, and only verified results are rated.</p>
   </div>
 </template>

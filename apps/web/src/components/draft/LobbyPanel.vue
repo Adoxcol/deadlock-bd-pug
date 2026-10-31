@@ -4,10 +4,12 @@ import { Gamepad2, Copy, Radio, Loader2, AlertTriangle, Clock, RefreshCw } from 
 import { api } from '../../lib/api';
 import { realtime } from '../../lib/ws';
 import StatusBadge from '../StatusBadge.vue';
+import { useSession } from '../../stores/session';
 
 interface Lobby { matchRowId: string; partyCode: string | null; deadlockMatchId: string | null; state: string; note: string | null; expiresAt: string | null; webhook: boolean }
 const props = defineProps<{ draftId: string; canCreate: boolean; simulated: boolean }>();
 const emit = defineEmits<{ copied: [string] }>();
+const session = useSession();
 const lobby = ref<Lobby | null>(null);
 const loaded = ref(false);
 const busy = ref(false);
@@ -83,6 +85,7 @@ onUnmounted(() => { unsub(); clearInterval(tick); clearInterval(poll); });
       <div v-if="matched" class="flex flex-wrap items-center gap-3">
         <span class="text-sm">Match <b class="font-mono">{{ lobby.deadlockMatchId }}</b> detected.</span>
         <RouterLink :to="`/matches/${lobby.matchRowId}/live`" class="btn-primary !h-8"><Radio class="w-4 h-4" />Open live match</RouterLink>
+        <RouterLink v-if="session.can('MODERATOR')" :to="`/matches/${lobby.matchRowId}`" class="btn-ghost !h-8">Submit result</RouterLink>
       </div>
       <p v-if="lobby.note" class="text-xs text-muted">{{ lobby.note }}</p>
       <p v-if="!matched && !lobby.webhook" class="text-xs text-muted">Detection checks every 15 seconds and can take a minute after the game starts.</p>
