@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
@@ -544,11 +545,9 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                   <span class="text-xs text-muted tabular-nums w-4">{{ i + 1 }}</span>
                   <HeroCard size="sm" :name="heroName(h)" :src="heroes.byId(h)?.imageUrl" class="animate-slot-in" :style="{ animationDelay: `${i * 70}ms` }" />
                   <span class="font-medium flex-1 truncate">{{ heroName(h) }}</span>
-                  <select v-if="(mySeat === t || isMod) && !spectate" class="input !h-8 !w-auto max-w-[160px]" :aria-label="`Player for ${heroName(h)}`" :value="assignedTo(h) ?? ''"
-                    :disabled="pending" @change="command({ kind: 'assign', heroId: h, userId: ($event.target as HTMLSelectElement).value || null })">
-                    <option value="">Unassigned</option>
-                    <option v-for="p in teamPeople(t)" :key="p" :value="p">{{ nameOf(p) }}</option>
-                  </select>
+                  <UiSelect v-if="(mySeat === t || isMod) && !spectate" size="sm" class="!w-40" :aria-label="`Player for ${heroName(h)}`" :model-value="assignedTo(h) ?? ''"
+                    :disabled="pending" :options="[{ value: '', label: 'Unassigned' }, ...teamPeople(t).map((p) => ({ value: p, label: nameOf(p) ?? p }))]"
+                    @update:model-value="(v) => command({ kind: 'assign', heroId: h, userId: v || null })" />
                   <span v-else :class="['text-sm truncate max-w-[160px]', assignedTo(h) ? '' : 'text-muted']">{{ nameOf(assignedTo(h)) ?? 'Unassigned' }}</span>
                 </li>
               </ul>

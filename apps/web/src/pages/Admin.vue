@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { onMounted, reactive, ref } from 'vue';
 import { RefreshCw } from 'lucide-vue-next';
 import { api } from '../lib/api';
@@ -31,7 +32,7 @@ const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'users', l
     <p v-if="msg" class="text-sm" role="status">{{ msg }}</p>
 
     <form v-if="tab === 'pug'" class="card p-4 grid sm:grid-cols-4 gap-3 items-end" @submit.prevent="run(() => api('/pugs', { method: 'POST', body: pug }), 'PUG created.')">
-      <div><label class="label">Format</label><select v-model="pug.format" class="input"><option>6v6</option><option>4v4</option><option>2v2</option></select></div>
+      <div><label class="label">Format</label><UiSelect v-model="pug.format" :options="['6v6', '4v4', '2v2'].map((v) => ({ value: v, label: v }))" /></div>
       <div><label class="label">Amber name</label><input v-model="pug.amberName" class="input" /></div>
       <div><label class="label">Sapphire name</label><input v-model="pug.sapphireName" class="input" /></div>
       <button class="btn-primary">Create PUG</button>
@@ -39,7 +40,7 @@ const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'users', l
 
     <div v-else-if="tab === 'users'" class="card overflow-x-auto"><table class="w-full table-compact"><thead><tr><th>User</th><th>Role</th></tr></thead>
       <tbody><tr v-for="u in users" :key="u.id"><td>{{ u.displayName }}</td><td>
-        <select :value="u.role" class="input !h-8 !w-auto" @change="run(() => api(`/admin/users/${u.id}/role`, { method: 'PATCH', body: { role: ($event.target as HTMLSelectElement).value } }), 'Role updated.')"><option v-for="r in ['SPECTATOR','PLAYER','CAPTAIN','MODERATOR','ADMIN','OWNER']" :key="r">{{ r }}</option></select>
+        <UiSelect :model-value="u.role" size="sm" class="!w-36" :options="['SPECTATOR','PLAYER','CAPTAIN','MODERATOR','ADMIN','OWNER'].map((r) => ({ value: r, label: r }))" @update:model-value="(v) => run(() => api(`/admin/users/${u.id}/role`, { method: 'PATCH', body: { role: v } }), 'Role updated.')" />
       </td></tr></tbody></table></div>
 
     <div v-else-if="tab === 'seasons'" class="space-y-3">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { reactive, ref } from 'vue';
 import { Crosshair, Info, ArrowRight } from 'lucide-vue-next';
 import { api } from '../lib/api';
@@ -22,7 +23,7 @@ async function track() {
     <form v-else class="card p-5 space-y-4" @submit.prevent="track">
       <div class="grid sm:grid-cols-[1fr_180px] gap-3">
         <div><label class="label" for="id">Identifier</label><input id="id" v-model="f.identifier" class="input font-mono" required maxlength="40" placeholder="Match ID, party ID or lobby ID" /></div>
-        <div><label class="label" for="t">Identifier type</label><select id="t" v-model="f.type" class="input"><option value="auto">Auto-detect</option><option value="match">Match ID</option><option value="party">Party ID</option><option value="lobby">Lobby ID</option></select></div>
+        <div><label class="label" for="t">Identifier type</label><UiSelect id="t" v-model="f.type" :options="[{ value: 'auto', label: 'Auto-detect' }, { value: 'match', label: 'Match ID' }, { value: 'party', label: 'Party ID' }, { value: 'lobby', label: 'Lobby ID' }]" /></div>
         <div><label class="label" for="p">PUG ID (optional)</label><input id="p" v-model="f.pugId" class="input" /></div>
         <div><label class="label" for="d">Draft ID (optional)</label><input id="d" v-model="f.draftId" class="input" /></div>
       </div>

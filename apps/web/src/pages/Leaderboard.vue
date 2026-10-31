@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { onMounted, ref, watch } from 'vue';
 import { api } from '../lib/api';
 import { pct } from '../lib/format';
@@ -23,8 +24,8 @@ const avg = (x: number | null | undefined) => (x == null ? '—' : x.toFixed(1))
     <div class="flex flex-wrap items-end gap-3">
       <div><h1 class="text-2xl font-semibold tracking-tight">Leaderboard</h1><p class="text-sm text-muted mt-1 flex items-center gap-2">{{ data?.season?.name ?? 'No active season' }}<SimBadge v-if="data?.season?.isSimulated" /></p></div>
       <div class="flex flex-wrap gap-2 sm:ml-auto">
-        <select v-model="seasonId" class="input !w-auto" aria-label="Season"><option value="">Current season</option><option v-for="s in seasons" :key="s.id" :value="s.id">{{ s.name }}{{ s.isArchived ? ' (archived)' : '' }}</option></select>
-        <select v-model.number="minMatches" class="input !w-auto" aria-label="Minimum matches"><option :value="0">Any matches</option><option :value="5">5+ matches</option><option :value="10">10+ matches</option></select>
+        <UiSelect v-model="seasonId" class="!w-48" aria-label="Season" :options="[{ value: '', label: 'Current season' }, ...seasons.map((s) => ({ value: s.id, label: s.name + (s.isArchived ? ' (archived)' : '') }))]" />
+        <UiSelect v-model="minMatches" class="!w-40" aria-label="Minimum matches" :options="[{ value: 0, label: 'Any matches' }, { value: 5, label: '5+ matches' }, { value: 10, label: '10+ matches' }]" />
         <input v-model="hero" class="input !w-36" placeholder="Most-played hero" aria-label="Hero filter" />
       </div>
     </div>

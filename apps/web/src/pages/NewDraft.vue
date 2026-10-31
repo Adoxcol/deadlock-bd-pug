@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { Swords, ExternalLink } from 'lucide-vue-next';
@@ -18,6 +19,7 @@ const f = reactive({
   name: 'PUG Draft', amberName: 'Team Amber', sapphireName: 'Team Sapphire', format: '6v6', bansPerTeam: 2, timerSeconds: 30,
   timeoutBehavior: 'skip', banPhases: 2 as 1 | 2, allowMirrorPicks: false, firstTeam: 'amber', amberCaptainId: '' as string, sapphireCaptainId: '' as string, visibility: 'public',
 });
+const captainOptions = computed(() => [{ value: '', label: 'Open seat' }, ...users.value.map((u) => ({ value: u.id, label: u.displayName }))]);
 onMounted(async () => { if (session.can('MODERATOR')) users.value = await api<typeof users.value>('/users').catch(() => []); });
 const orderPreview = computed(() => {
   const size = { '6v6': 6, '4v4': 4, '2v2': 2 }[f.format as '6v6']!; const first = f.firstTeam, other = first === 'amber' ? 'sapphire' : 'amber';
@@ -106,13 +108,13 @@ async function submit() {
             <div class="grid grid-cols-2 gap-1">
               <button v-for="t in (['amber', 'sapphire'] as const)" :key="t" type="button" :class="['h-9 rounded border font-display uppercase text-sm truncate px-2', f.firstTeam === t ? (t === 'amber' ? 'border-amber-team bg-amber-team/20 text-amber-team' : 'border-sapphire-team bg-sapphire-team/20 text-sapphire-team') : 'border-line text-muted hover:text-text']" @click="f.firstTeam = t">{{ (t === 'amber' ? f.amberName : f.sapphireName) || t }}</button>
             </div></div>
-          <div v-if="f.bansPerTeam >= 2"><label class="label" for="bp">Ban phases</label><select id="bp" v-model.number="f.banPhases" class="input"><option :value="2">Two phases (bans → picks → bans → picks)</option><option :value="1">One phase (all bans first)</option></select></div>
-          <div><label class="label" for="to">When a ban timer runs out</label><select id="to" v-model="f.timeoutBehavior" class="input"><option value="skip">No ban (ban is lost)</option><option value="random">Ban the hero being looked at, else random</option><option value="pause">Pause for a moderator</option></select></div>
+          <div v-if="f.bansPerTeam >= 2"><label class="label" for="bp">Ban phases</label><UiSelect id="bp" v-model="f.banPhases" :options="[{ value: 2, label: 'Two phases (bans → picks → bans → picks)' }, { value: 1, label: 'One phase (all bans first)' }]" /></div>
+          <div><label class="label" for="to">When a ban timer runs out</label><UiSelect id="to" v-model="f.timeoutBehavior" :options="[{ value: 'skip', label: 'No ban (ban is lost)' }, { value: 'random', label: 'Ban the hero being looked at, else random' }, { value: 'pause', label: 'Pause for a moderator' }]" /></div>
           <template v-if="session.can('MODERATOR')">
-          <div><label class="label" for="ac">{{ f.amberName || 'Amber' }} captain</label><select id="ac" v-model="f.amberCaptainId" class="input"><option value="">Open seat</option><option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }}</option></select></div>
-          <div><label class="label" for="sc">{{ f.sapphireName || 'Sapphire' }} captain</label><select id="sc" v-model="f.sapphireCaptainId" class="input"><option value="">Open seat</option><option v-for="u in users" :key="u.id" :value="u.id">{{ u.displayName }}</option></select></div>
+          <div><label class="label" for="ac">{{ f.amberName || 'Amber' }} captain</label><UiSelect id="ac" v-model="f.amberCaptainId" :options="captainOptions" /></div>
+          <div><label class="label" for="sc">{{ f.sapphireName || 'Sapphire' }} captain</label><UiSelect id="sc" v-model="f.sapphireCaptainId" :options="captainOptions" /></div>
           </template>
-          <div><label class="label" for="vis">Visibility</label><select id="vis" v-model="f.visibility" class="input"><option value="public">Public — anyone can spectate</option><option value="private">Private — logged-in members only</option></select></div>
+          <div><label class="label" for="vis">Visibility</label><UiSelect id="vis" v-model="f.visibility" :options="[{ value: 'public', label: 'Public — anyone can spectate' }, { value: 'private', label: 'Private — logged-in members only' }]" /></div>
           <label class="flex items-center gap-2 text-sm sm:col-span-2"><input v-model="f.allowMirrorPicks" type="checkbox" class="accent-[#d4a24c]" />Allow both teams to pick the same hero</label>
         </div>
       </div>

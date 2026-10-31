@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { FlaskConical } from 'lucide-vue-next';
@@ -27,7 +28,7 @@ async function devLogin() {
       <p class="text-xs text-muted">Simulation mode only. Creates a simulated user flagged as such; its data never affects real ratings.</p>
       <div><label class="label" for="dn">Display name</label><input id="dn" v-model="name" class="input" /></div>
       <div><label class="label" for="dr">Role</label>
-        <select id="dr" v-model="role" class="input"><option v-for="r in ['SPECTATOR','PLAYER','CAPTAIN','MODERATOR','ADMIN','OWNER']" :key="r">{{ r }}</option></select></div>
+        <UiSelect id="dr" v-model="role" :options="['SPECTATOR','PLAYER','CAPTAIN','MODERATOR','ADMIN','OWNER'].map((r) => ({ value: r, label: r }))" /></div>
       <button class="btn-ghost w-full" @click="devLogin">Sign in as simulated user</button>
       <p v-if="err" class="text-xs text-danger">{{ err }}</p>
     </div>

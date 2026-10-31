@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { Link2, Eye } from 'lucide-vue-next';
 import { api } from '../lib/api';
@@ -42,7 +43,7 @@ async function setVis(v: string) { await api('/me/visibility', { method: 'PATCH'
       <div v-if="self" class="card p-4 flex flex-wrap items-center gap-3 text-sm">
         <a v-if="!p.steam" href="/api/auth/steam" class="btn-ghost"><Link2 class="w-4 h-4" />Link Steam account</a>
         <span class="flex items-center gap-2 text-muted"><Eye class="w-4 h-4" />Profile visibility</span>
-        <select :value="p.visibility" class="input !w-auto" @change="setVis(($event.target as HTMLSelectElement).value)"><option value="PUBLIC">Public</option><option value="MEMBERS">Members only</option><option value="PRIVATE">Private</option></select>
+        <UiSelect :model-value="p.visibility" class="!w-40" :options="[{ value: 'PUBLIC', label: 'Public' }, { value: 'MEMBERS', label: 'Members only' }, { value: 'PRIVATE', label: 'Private' }]" @update:model-value="setVis" />
       </div>
       <div class="grid lg:grid-cols-3 gap-4">
         <section class="card p-4 lg:col-span-2"><h2 class="h-section mb-3">Rating history</h2>

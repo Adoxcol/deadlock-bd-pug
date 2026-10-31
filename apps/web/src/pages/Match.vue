@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UiSelect from '../components/UiSelect.vue';
 import { computed, onMounted, ref } from 'vue';
 import { BadgeCheck, FlaskConical, Hourglass, Radio } from 'lucide-vue-next';
 import { api } from '../lib/api';
@@ -70,7 +71,7 @@ async function submit() {
         <h2 class="font-semibold">Submit result manually</h2>
         <p class="text-xs text-muted">Uses the PUG roster ({{ roster('AMBER').length }} vs {{ roster('SAPPHIRE').length }}). The result is marked as manually verified, recorded in the audit log, and processed once only.</p>
         <div class="flex flex-wrap gap-2 items-center">
-          <select v-model="winner" class="input !w-auto"><option value="amber">{{ teamName('AMBER') }} won</option><option value="sapphire">{{ teamName('SAPPHIRE') }} won</option></select>
+          <UiSelect v-model="winner" class="!w-48" :options="[{ value: 'amber', label: `${teamName('AMBER')} won` }, { value: 'sapphire', label: `${teamName('SAPPHIRE')} won` }]" />
           <button class="btn-primary">Submit verified result</button>
         </div>
       </form>
