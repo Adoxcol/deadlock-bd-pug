@@ -2,6 +2,9 @@ export interface Hero {
   id: number; name: string; imageUrl: string | null; simulated: boolean; heroType?: string | null;
   /** Tall art with its painted background, and the stylised name logo (SVG). */
   verticalUrl?: string | null; nameUrl?: string | null;
+  /** 4K hero-select backdrop (transparent on the left); the API has no larger portrait than the 280×380 card cutout. */
+  backgroundUrl?: string | null;
+  tags?: string[];
   /** Hero-select voicelines: `select` plays on pick, `unselect` on ban. */
   vo?: { pick: string[]; ban: string[] };
 }
@@ -14,7 +17,7 @@ export interface Hero {
 export async function fetchHeroes(apiUrl: string, fetchImpl: typeof fetch = fetch): Promise<Hero[]> {
   const res = await fetchImpl(`${apiUrl}/v1/assets/heroes?only_active=true`, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`Hero assets returned ${res.status}`);
-  const raw = (await res.json()) as Array<{ id: number; name: string; class_name?: string; disabled?: boolean; in_development?: boolean; player_selectable?: boolean; hero_type?: string | null; images?: Record<string, string | null | undefined> }>;
+  const raw = (await res.json()) as Array<{ id: number; name: string; class_name?: string; tags?: string[]; disabled?: boolean; in_development?: boolean; player_selectable?: boolean; hero_type?: string | null; images?: Record<string, string | null | undefined> }>;
   if (!Array.isArray(raw)) throw new Error('Unexpected hero assets response');
   const vo = await fetchVoicelines(apiUrl, fetchImpl);
   const heroes = raw
@@ -24,6 +27,8 @@ export async function fetchHeroes(apiUrl: string, fetchImpl: typeof fetch = fetc
       imageUrl: h.images?.icon_hero_card_webp ?? h.images?.icon_hero_card ?? h.images?.top_bar_vertical_image ?? h.images?.icon_image_small ?? null,
       verticalUrl: h.images?.top_bar_vertical_image_webp ?? h.images?.top_bar_vertical_image ?? null,
       nameUrl: h.images?.name_image ?? null,
+      tags: Array.isArray(h.tags) ? h.tags : [],
+      backgroundUrl: h.images?.background_image_webp ?? h.images?.background_image ?? null,
       vo: voFor(vo, h.class_name),
     }));
   if (!heroes.length) throw new Error('Hero assets returned no heroes');

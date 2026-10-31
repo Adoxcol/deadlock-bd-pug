@@ -572,7 +572,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   // ---------- Simulation ----------
   if (cfg.SIMULATION_MODE) {
     app.post('/api/sim/workflow', { preHandler: requireRole('MODERATOR') }, async (req) => {
-      const b = z.object({ format: z.enum(['6v6', '4v4', '2v2']).default('6v6'), speedMs: z.number().int().min(50).max(5000).default(800) }).parse(req.body ?? {});
+      const b = z.object({ format: z.enum(['6v6', '4v4', '2v2']).default('6v6'), speedMs: z.number().int().min(50).max(5000).default(800), draftStepMs: z.number().int().min(50).max(20000).default(4500) }).parse(req.body ?? {});
       const size = TEAM_SIZE[b.format];
       const players = await Promise.all(Array.from({ length: size * 2 }, async (_, i) => {
         const name = `[SIM] Player ${i + 1}`;
@@ -587,8 +587,9 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       await db.draftParticipant.createMany({ data: players.map((p, i) => ({ draftId: rec.id, userId: p.id, team: i < size ? 'AMBER' : 'SAPPHIRE', isCaptain: i % size === 0, displayNameSnapshot: p.displayName })) });
       const actor = { userId: req.user!.id, isModerator: true };
       void (async () => {
-        const wait = () => new Promise((r) => setTimeout(r, b.speedMs));
-        await wait();
+        // Draft at a watchable pace: a lead-in so spectators can open the room, then a jittered "thinking" time per turn.
+        const wait = (ms = b.draftStepMs * (0.65 + Math.random() * 0.7)) => new Promise((r) => setTimeout(r, ms));
+        await wait(Math.max(b.draftStepMs, 6000));
         let s = (await drafts.execute(rec.id, { kind: 'start' }, actor)).state;
         while (s.status === 'drafting') {
           await wait();
