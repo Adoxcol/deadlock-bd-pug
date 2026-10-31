@@ -2,6 +2,7 @@
 Native live drafting, match tracking, leaderboards and Discord integration for a Deadlock PUG community.
 
 Read first: [`docs/API_FEASIBILITY.md`](docs/API_FEASIBILITY.md) — what the Deadlock APIs can and cannot do.
+Contributing (people or AI agents): [`AGENTS.md`](AGENTS.md). Design system: [`docs/UI.md`](docs/UI.md).
 
 ## Stack
 Vue 3 + Vite + Tailwind + Pinia · Fastify + WebSocket · PostgreSQL/Prisma · Redis · discord.js. Modular monolith (`apps/server`, `apps/web`).
@@ -40,4 +41,6 @@ identifier classification, match ID resolution (mocked API), live-event normaliz
 cp .env.example .env   # fill in
 docker compose up -d --build              # add --profile live to run deadlock live-events locally
 ```
-Caddy terminates TLS and serves the SPA; `/api` and `/ws` go to the app. Health: `GET /api/health`.
+Caddy terminates TLS; the app container serves the API, WebSocket and the website. Health: `GET /api/health`.
+
+Updating: `git pull && docker compose up -d --build` (the website ships inside the image, so nothing else to clear).
