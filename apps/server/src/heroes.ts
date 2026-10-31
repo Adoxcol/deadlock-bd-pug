@@ -1,4 +1,10 @@
-export interface Hero { id: number; name: string; imageUrl: string | null; simulated: boolean; heroType?: string | null }
+export interface Hero {
+  id: number; name: string; imageUrl: string | null; simulated: boolean; heroType?: string | null;
+  /** Tall art with its painted background, and the stylised name logo (SVG). */
+  verticalUrl?: string | null; nameUrl?: string | null;
+  /** Hero-select voicelines: `select` plays on pick, `unselect` on ban. */
+  vo?: { pick: string[]; ban: string[] };
+}
 
 /**
  * Live roster from deadlock-api: `GET {DEADLOCK_API_URL}/v1/assets/heroes?only_active=true` (verified in the
@@ -8,16 +14,40 @@ export interface Hero { id: number; name: string; imageUrl: string | null; simul
 export async function fetchHeroes(apiUrl: string, fetchImpl: typeof fetch = fetch): Promise<Hero[]> {
   const res = await fetchImpl(`${apiUrl}/v1/assets/heroes?only_active=true`, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`Hero assets returned ${res.status}`);
-  const raw = (await res.json()) as Array<{ id: number; name: string; disabled?: boolean; in_development?: boolean; player_selectable?: boolean; hero_type?: string | null; images?: Record<string, string | null | undefined> }>;
+  const raw = (await res.json()) as Array<{ id: number; name: string; class_name?: string; disabled?: boolean; in_development?: boolean; player_selectable?: boolean; hero_type?: string | null; images?: Record<string, string | null | undefined> }>;
   if (!Array.isArray(raw)) throw new Error('Unexpected hero assets response');
+  const vo = await fetchVoicelines(apiUrl, fetchImpl);
   const heroes = raw
     .filter((h) => !h.disabled && !h.in_development && h.player_selectable !== false)
     .map((h) => ({
       id: h.id, name: h.name, simulated: false, heroType: h.hero_type ?? null,
       imageUrl: h.images?.icon_hero_card_webp ?? h.images?.icon_hero_card ?? h.images?.top_bar_vertical_image ?? h.images?.icon_image_small ?? null,
+      verticalUrl: h.images?.top_bar_vertical_image_webp ?? h.images?.top_bar_vertical_image ?? null,
+      nameUrl: h.images?.name_image ?? null,
+      vo: voFor(vo, h.class_name),
     }));
   if (!heroes.length) throw new Error('Hero assets returned no heroes');
   return heroes;
+}
+
+type VoTable = Record<string, Record<string, unknown>>;
+/** The sounds index is ~18MB, so only the hero-select lines are kept. Voicelines are optional: failure yields none. */
+async function fetchVoicelines(apiUrl: string, fetchImpl: typeof fetch): Promise<VoTable> {
+  try {
+    const res = await fetchImpl(`${apiUrl}/v1/assets/sounds`, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) return {};
+    const all = ((await res.json()) as { vo?: VoTable }).vo ?? {};
+    const out: VoTable = {};
+    for (const [k, lines] of Object.entries(all)) out[k] = Object.fromEntries(Object.entries(lines).filter(([n, u]) => typeof u === 'string' && /_(un)?select_\d+$/.test(n)));
+    return out;
+  } catch { return {}; }
+}
+function voFor(vo: VoTable, className?: string): Hero['vo'] {
+  const k = className?.replace(/^hero_/, ''); const lines = k ? vo[k] : undefined;
+  if (!k || !lines) return undefined;
+  const pick = Object.entries(lines).filter(([n]) => n.startsWith(`${k}_select_`)).map(([, u]) => u as string);
+  const ban = Object.entries(lines).filter(([n]) => n.startsWith(`${k}_unselect_`)).map(([, u]) => u as string);
+  return pick.length || ban.length ? { pick, ban } : undefined;
 }
 
 /**

@@ -64,3 +64,15 @@ export const sfx = {
     noise(c, t + 0.36, 0.8, 6000, 2000, 0.08);
   },
 };
+
+/** Hero voicelines (from the Deadlock assets API). One plays at a time, a new line cuts off the previous one. */
+let voice: HTMLAudioElement | null = null;
+export function playVoice(lines: string[] | undefined, delayMs = 250) {
+  if (!lines?.length || volume.value === 0) return;
+  const url = lines[Math.floor(Math.random() * lines.length)];
+  setTimeout(() => {
+    voice?.pause();
+    voice = new Audio(url); voice.volume = Math.min(1, volume.value * 1.2);
+    void voice.play().catch(() => { /* autoplay blocked until the user interacts */ });
+  }, delayMs);
+}

@@ -7,7 +7,7 @@ import {
   Users, Check, LogOut, ArrowLeftRight, Crown, UserPlus, UserMinus, RotateCcw, Plus, SkipForward, Settings2, Circle,
   Volume2, VolumeX, X,
 } from 'lucide-vue-next';
-import { sfx, volume } from '../lib/sfx';
+import { sfx, volume, playVoice } from '../lib/sfx';
 import RevealSplash from '../components/draft/RevealSplash.vue';
 import TeamCrest, { FACTION } from '../components/draft/TeamCrest.vue';
 import { api, ApiError } from '../lib/api';
@@ -37,6 +37,7 @@ const pending = ref(false);
 const selected = ref<number | null>(null);
 const hovered = ref<number | null>(null);
 /** Hero shown in the big preview: your selection, else whatever you're hovering. */
+const art = (id: number | null) => (id === null ? null : heroes.byId(id)?.verticalUrl ?? heroes.byId(id)?.imageUrl ?? null);
 const preview = computed(() => selected.value ?? hovered.value);
 const query = ref('');
 const heroType = ref<string>('all');
@@ -213,13 +214,15 @@ const confettiBits = Array.from({ length: 70 }, (_, i) => ({
   left: `${(i * 37) % 100}%`, delay: `${(i % 14) * 0.08}s`, size: 6 + (i % 4) * 2,
   color: ['#e8a33a', '#5a8fe0', '#d4a24c', '#ece2cc', '#cf4a3c'][i % 5], round: i % 3 === 0,
 }));
-// Only react to new actions after the initial load, so reopening a finished draft stays quiet.
+// Only react to single new actions, so the initial load of an in-progress or finished draft stays quiet.
 watch(() => s.value?.history?.length ?? 0, (len, prev) => {
-  if (!prev || len <= prev) return;
+  if (len !== prev + 1) return;
   const last = s.value.history.at(-1);
   if (!last || last.reason === 'correction') return;
   if (last.heroId === null) { sfx.tick(); return; }
   last.type === 'ban' ? sfx.ban() : sfx.pick();
+  const vo = heroes.byId(last.heroId)?.vo;
+  playVoice(last.type === 'ban' ? vo?.ban : vo?.pick);
   if (reducedMotion) return;
   clearTimeout(splashTimer);
   splash.value = { key: last.seq, heroId: last.heroId, type: last.type, team: last.team };
@@ -486,17 +489,17 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                   </div>
                   <p v-if="!spectate && !myTurn && s.status === 'drafting'" class="text-xs text-muted">{{ mySeat ? 'Not your turn yet.' : 'You are watching. Only captains can ban and pick.' }}</p>
                   <PageState :empty="!roster.length" empty-text="No heroes match your search.">
-                    <div class="grid grid-cols-[repeat(auto-fill,minmax(54px,1fr))] gap-1.5 max-h-[50vh] xl:max-h-none xl:flex-1 xl:min-h-0 content-start overflow-y-auto p-1 -m-1">
+                    <div class="grid grid-cols-[repeat(auto-fill,minmax(62px,1fr))] gap-1.5 max-h-[50vh] xl:max-h-none xl:flex-1 xl:min-h-0 content-start overflow-y-auto p-1 -m-1" @pointerleave="hovered = null">
                       <button v-for="h in roster" :key="h.id" type="button" data-hero
                         :aria-disabled="!myTurn || !!unavailableReason(h.id) || pending"
                         :title="unavailableReason(h.id) ? `${h.name} (${unavailableReason(h.id)})` : h.name"
-                        :class="['relative aspect-square overflow-hidden rounded-sm border bg-raised transition',
-                          selected === h.id ? (step?.type === 'ban' ? 'border-danger ring-2 ring-danger z-10 scale-105' : 'border-primary ring-2 ring-primary z-10 scale-105') : 'border-line/70',
-                          unavailableReason(h.id) ? 'opacity-30 grayscale' : myTurn ? 'hover:border-text/70 hover:brightness-110 cursor-pointer' : 'cursor-default']"
-                        @click="choose(h.id)" @pointerenter="hovered = h.id" @pointerleave="hovered = null">
-                        <img v-if="h.imageUrl" :src="h.imageUrl" alt="" class="absolute inset-0 w-full h-full object-cover object-top" loading="lazy" />
+                        :class="['group relative aspect-[3/5] overflow-hidden border bg-raised transition-[transform,border-color,filter] duration-150 ease-out',
+                          selected === h.id ? (step?.type === 'ban' ? 'border-danger ring-2 ring-danger z-10 -translate-y-0.5' : 'border-primary ring-2 ring-primary z-10 -translate-y-0.5') : 'border-black/60',
+                          unavailableReason(h.id) ? 'opacity-30 grayscale' : 'hover:border-text/80 hover:-translate-y-0.5 hover:z-10 brightness-[.85] hover:brightness-110 cursor-pointer']"
+                        @click="choose(h.id)" @pointerenter="hovered = h.id">
+                        <img v-if="art(h.id)" :src="art(h.id)!" alt="" class="absolute inset-0 w-full h-full object-cover object-top transition-transform duration-200 group-hover:scale-110" loading="lazy" />
                         <span v-else class="absolute inset-0 grid place-items-center font-display text-xs text-muted">{{ h.name.slice(0, 2) }}</span>
-                        <span v-if="preview === h.id" class="absolute inset-x-0 bottom-0 bg-black/75 font-display text-[9px] uppercase text-center truncate px-0.5">{{ h.name }}</span>
+                        <span class="absolute inset-x-0 bottom-0 pt-3 pb-0.5 bg-gradient-to-t from-black via-black/70 to-transparent font-display text-[8.5px] uppercase text-center truncate px-0.5 opacity-0 group-hover:opacity-100 transition-opacity">{{ h.name }}</span>
                         <span v-if="unavailableReason(h.id) === 'banned'" class="absolute left-[-25%] w-[150%] top-1/2 h-0.5 bg-danger rotate-[-45deg]" />
                       </button>
                     </div>
@@ -505,17 +508,20 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
 
                 <!-- Preview / action -->
                 <div class="relative card overflow-hidden min-h-[320px] xl:min-h-0 flex flex-col justify-end p-5">
-                  <template v-if="preview !== null">
-                    <img :key="preview" :src="heroes.byId(preview)?.imageUrl ?? undefined" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-40" />
-                    <img :key="'p' + preview" :src="heroes.byId(preview)?.imageUrl ?? undefined" alt="" class="absolute right-0 top-0 h-full w-auto max-w-full object-cover object-top animate-fade-up [mask-image:linear-gradient(to_left,black_60%,transparent)]" />
-                    <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/50 to-transparent" />
-                  </template>
-                  <div v-else :class="['absolute inset-0', step?.type === 'ban' ? 'bg-[radial-gradient(ellipse_at_50%_35%,rgba(207,74,60,.22),transparent_65%)]' : 'bg-[radial-gradient(ellipse_at_50%_35%,rgba(212,162,76,.25),transparent_65%)]']" />
+                  <Transition enter-active-class="transition-opacity duration-200" leave-active-class="transition-opacity duration-200 absolute inset-0" enter-from-class="opacity-0" leave-to-class="opacity-0">
+                    <div v-if="preview !== null" :key="preview" class="absolute inset-0">
+                      <img :src="heroes.byId(preview)?.imageUrl ?? undefined" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-50" />
+                      <img :src="art(preview) ?? undefined" alt="" class="absolute right-0 top-0 h-full w-auto max-w-full object-cover object-top [mask-image:linear-gradient(to_left,black_65%,transparent)]" />
+                      <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/30 to-transparent" />
+                    </div>
+                  </Transition>
+                  <div v-if="preview === null" :class="['absolute inset-0', step?.type === 'ban' ? 'bg-[radial-gradient(ellipse_at_50%_35%,rgba(207,74,60,.22),transparent_65%)]' : 'bg-[radial-gradient(ellipse_at_50%_35%,rgba(212,162,76,.25),transparent_65%)]']" />
                   <div class="relative flex flex-wrap items-end justify-between gap-4">
                     <div class="min-w-0 space-y-2">
                       <template v-if="preview !== null">
                         <div class="text-sm text-muted">{{ selected !== null ? (step?.type === 'ban' ? 'Your ban' : 'Your pick') : unavailableReason(preview) ? `Unavailable · ${unavailableReason(preview)}` : myTurn ? 'Click to select' : 'Previewing' }}</div>
-                        <div class="font-display text-5xl sm:text-6xl uppercase leading-[0.9] italic -skew-x-6 text-text drop-shadow-[0_4px_20px_rgba(0,0,0,.8)] truncate">{{ heroName(preview) }}</div>
+                        <img v-if="heroes.byId(preview)?.nameUrl" :src="heroes.byId(preview)!.nameUrl!" :alt="heroName(preview)" class="h-14 sm:h-16 w-auto max-w-full object-contain object-left drop-shadow-[0_4px_20px_rgba(0,0,0,.9)]" />
+                        <div v-else class="font-display text-5xl sm:text-6xl uppercase leading-[0.9] italic -skew-x-6 text-text drop-shadow-[0_4px_20px_rgba(0,0,0,.8)] truncate">{{ heroName(preview) }}</div>
                         <span v-if="heroes.byId(preview)?.heroType" class="inline-block font-display text-xs uppercase bg-text text-bg px-2 py-0.5">{{ heroes.byId(preview)?.heroType }}</span>
                       </template>
                       <template v-else>
@@ -555,57 +561,52 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
 
         <!-- ================= RESULT ================= -->
         <template v-else-if="s.status === 'completed'">
-          <div class="text-center space-y-2 animate-fade-up">
-            <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-accent flex items-center justify-center gap-1.5"><Check class="w-3.5 h-3.5" />Draft complete</div>
-            <h2 class="text-4xl sm:text-5xl text-text">Final lineups</h2>
-            <div class="rule-brass max-w-sm mx-auto" />
-          </div>
-          <div class="grid xl:grid-cols-2 gap-4">
-            <section v-for="t in SIDES" :key="t" :class="['card overflow-hidden border-t-2', teamBorder(t),
-              t === 'amber' ? 'bg-gradient-to-b from-amber-team/[0.12] via-surface/90 to-surface/90' : 'bg-gradient-to-b from-sapphire-team/[0.12] via-surface/90 to-surface/90']">
-              <header class="flex flex-wrap items-center gap-3 px-4 pt-4">
-                <TeamCrest :team="t" :size="52" class="shrink-0 drop-shadow-[0_0_12px_currentColor]" />
-                <div class="min-w-0 flex-1">
-                  <div :class="['font-mono text-[10.5px] font-bold uppercase tracking-[0.25em] opacity-80', teamText(t)]">{{ FACTION[t] }}</div>
-                  <h2 :class="['font-display text-2xl sm:text-3xl leading-none truncate', teamText(t)]">{{ rec.teamNames[t] }}</h2>
-                </div>
-                <div class="flex items-center gap-1.5">
-                  <span class="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-danger/80 mr-1">Bans</span>
-                  <template v-for="(b, i) in slots(t, 'ban')" :key="i">
-                    <div v-if="b.heroId !== null" class="relative w-10 h-12 rounded overflow-hidden border border-danger/50 bg-raised" :title="heroName(b.heroId)">
-                      <img :src="heroes.byId(b.heroId)?.imageUrl ?? undefined" alt="" class="absolute inset-0 w-full h-full object-cover object-top grayscale opacity-70" />
-                      <div class="absolute left-[-25%] w-[150%] top-1/2 h-0.5 bg-danger rotate-[-45deg] shadow-[0_0_6px_#cf4a3c]" />
-                    </div>
-                    <span v-else class="w-10 h-12 grid place-items-center rounded border border-dashed border-line font-mono text-[8px] uppercase text-muted">None</span>
-                  </template>
-                  <span v-if="!slots(t, 'ban').length" class="text-xs text-muted">None</span>
-                </div>
-              </header>
-              <ul class="grid grid-cols-3 sm:grid-cols-6 xl:grid-cols-3 2xl:grid-cols-6 gap-2 p-4">
-                <li v-for="(h, i) in s.picks[t]" :key="h" class="flex flex-col gap-1.5 animate-slot-in" :style="{ animationDelay: `${i * 80}ms` }">
-                  <div :class="['relative aspect-[3/4] rounded overflow-hidden border bg-raised group', t === 'amber' ? 'border-amber-team/40' : 'border-sapphire-team/40',
-                    assignedTo(h) === me && 'ring-2 ring-draft']">
-                    <img :src="heroes.byId(h)?.imageUrl ?? undefined" alt="" class="absolute inset-0 w-full h-full object-cover object-top transition-transform duration-300 group-hover:scale-105" />
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/10 to-transparent" />
-                    <span :class="['absolute top-1 left-1 w-5 h-5 grid place-items-center rotate-45 border font-mono text-[10px] font-bold bg-bg/80', t === 'amber' ? 'border-amber-team text-amber-team' : 'border-sapphire-team text-sapphire-team']"><span class="-rotate-45">{{ i + 1 }}</span></span>
-                    <div class="absolute inset-x-0 bottom-0 p-1.5">
-                      <div class="font-display text-xs sm:text-sm uppercase leading-tight truncate text-text">{{ heroName(h) }}</div>
-                      <div v-if="!((mySeat === t || isMod) && !spectate)" :class="['font-mono text-[10px] truncate', assignedTo(h) ? 'text-draft' : 'text-muted']">{{ nameOf(assignedTo(h)) ?? 'Unassigned' }}</div>
-                    </div>
+          <div class="relative flex flex-col items-center animate-fade-up">
+            <div class="relative z-10 -mb-3 px-3 py-1 bg-text text-bg font-display text-xs uppercase tracking-wider -rotate-1 shadow-lg flex items-center gap-1.5"><Check class="w-3.5 h-3.5" />Draft complete</div>
+            <template v-for="(t, ti) in SIDES" :key="t">
+              <div v-if="ti === 1" class="relative z-10 -my-4 w-14 h-14 grid place-items-center bg-bg border border-line rotate-45 shadow-xl"><span class="-rotate-45 font-display text-xl text-text">VS</span></div>
+              <section :class="['w-full border border-line/70 px-4 sm:px-8 py-6 flex flex-col lg:flex-row items-center gap-6',
+                t === 'amber' ? 'bg-gradient-to-r from-amber-team/[0.10] via-surface/80 to-surface/60' : 'bg-gradient-to-l from-sapphire-team/[0.10] via-surface/80 to-surface/60 lg:flex-row-reverse']">
+                <header :class="['shrink-0 lg:w-56 flex flex-col gap-2', t === 'amber' ? 'items-center lg:items-start text-left' : 'items-center lg:items-end text-right']">
+                  <div :class="['flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.25em]', teamText(t)]"><TeamCrest :team="t" :size="22" />{{ FACTION[t] }}</div>
+                  <h2 :class="['font-display text-3xl xl:text-4xl uppercase leading-none max-w-full break-words', teamText(t)]">{{ rec.teamNames[t] }}</h2>
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-muted mr-1">Bans</span>
+                    <template v-for="(b, i) in slots(t, 'ban')" :key="i">
+                      <div v-if="b.heroId !== null" class="relative w-8 h-10 overflow-hidden border border-danger/60 bg-raised" :title="heroName(b.heroId)">
+                        <img :src="art(b.heroId) ?? undefined" alt="" class="absolute inset-0 w-full h-full object-cover object-top grayscale opacity-70" />
+                        <div class="absolute left-[-25%] w-[150%] top-1/2 h-0.5 bg-danger rotate-[-45deg]" />
+                      </div>
+                      <span v-else class="w-8 h-10 grid place-items-center border border-line bg-raised/60 font-mono text-[7px] font-bold uppercase text-muted">None</span>
+                    </template>
                   </div>
-                  <UiSelect v-if="(mySeat === t || isMod) && !spectate" size="sm" class="!px-2 !pr-2" :aria-label="`Player for ${heroName(h)}`" :model-value="assignedTo(h) ?? ''"
-                    :disabled="pending" :options="[{ value: '', label: 'Unassigned' }, ...teamPeople(t).map((p) => ({ value: p, label: nameOf(p) ?? p }))]"
-                    @update:model-value="(v) => command({ kind: 'assign', heroId: h, userId: v || null })" />
-                </li>
-              </ul>
-              <div class="px-4 pb-4 space-y-1">
-              <p v-if="mySeat === t && teamPeople(t).length < teamSize" class="text-xs text-muted">Only {{ teamPeople(t).length }} of {{ teamSize }} players joined this team. Others can still join from the lobby link before you assign.</p>
-              <p v-if="myTeam === t && !mySeat && s.assignments.find((a: any) => a.userId === me)" class="text-sm text-draft">You're playing {{ heroName(s.assignments.find((a: any) => a.userId === me).heroId) }}.</p>
+                </header>
+                <ul class="flex-1 min-w-0 w-full grid grid-cols-3 sm:grid-cols-6 gap-3 lg:max-w-[920px]">
+                  <li v-for="(h, i) in s.picks[t]" :key="h" class="flex flex-col gap-1.5 animate-slot-in" :style="{ animationDelay: `${(ti * 6 + i) * 70}ms` }">
+                    <div :class="['relative aspect-[9/16] overflow-hidden bg-raised group shadow-[0_10px_30px_-10px_rgba(0,0,0,.9)] [clip-path:polygon(2%_1%,99%_0,100%_99%,0_100%)]', assignedTo(h) === me && 'ring-2 ring-draft']">
+                      <img :src="art(h) ?? undefined" alt="" class="absolute inset-0 w-full h-full object-cover object-top transition-transform duration-300 group-hover:scale-105" />
+                      <div class="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/90 to-transparent" />
+                      <span :class="['absolute top-1.5 left-1.5 min-w-5 h-5 px-1 grid place-items-center font-mono text-[11px] font-bold text-bg', t === 'amber' ? 'bg-amber-team' : 'bg-sapphire-team']">{{ i + 1 }}</span>
+                      <div class="absolute inset-x-0 bottom-0 p-2 flex flex-col items-center">
+                        <img v-if="heroes.byId(h)?.nameUrl" :src="heroes.byId(h)!.nameUrl!" :alt="heroName(h)" class="h-7 w-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,.9)]" />
+                        <div v-else class="font-display text-sm uppercase leading-tight truncate text-text">{{ heroName(h) }}</div>
+                        <div v-if="!((mySeat === t || isMod) && !spectate)" :class="['mt-0.5 font-mono text-[10px] truncate max-w-full', assignedTo(h) ? 'text-draft' : 'text-muted']">{{ nameOf(assignedTo(h)) ?? 'Unassigned' }}</div>
+                      </div>
+                    </div>
+                    <UiSelect v-if="(mySeat === t || isMod) && !spectate" size="sm" class="!px-2 !pr-2" :aria-label="`Player for ${heroName(h)}`" :model-value="assignedTo(h) ?? ''"
+                      :disabled="pending" :options="[{ value: '', label: 'Unassigned' }, ...teamPeople(t).map((p) => ({ value: p, label: nameOf(p) ?? p }))]"
+                      @update:model-value="(v) => command({ kind: 'assign', heroId: h, userId: v || null })" />
+                  </li>
+                </ul>
+              </section>
+              <div class="w-full px-1 pt-1 space-y-1 text-center">
+                <p v-if="mySeat === t && teamPeople(t).length < teamSize" class="text-xs text-muted">Only {{ teamPeople(t).length }} of {{ teamSize }} players joined {{ rec.teamNames[t] }}. Others can still join from the lobby link before you assign.</p>
+                <p v-if="myTeam === t && !mySeat && s.assignments.find((a: any) => a.userId === me)" class="text-sm text-draft">You're playing {{ heroName(s.assignments.find((a: any) => a.userId === me).heroId) }}.</p>
               </div>
-            </section>
+            </template>
           </div>
           <LobbyPanel v-if="!broadcast" :draft-id="rec.id" :can-create="!spectate && (!!mySeat || isMod)" :simulated="rec.simulated" @copied="flash" />
-          <div class="flex flex-wrap justify-center gap-2">
+          <div class="flex flex-wrap justify-center gap-2 [&>*]:-skew-x-6">
             <button class="btn-ghost" @click="copy(resultText, 'Result')"><Copy class="w-4 h-4" />Copy result</button>
             <button class="btn-ghost" @click="copy(roomLink, 'Link')"><Link2 class="w-4 h-4" />Copy link</button>
             <template v-if="mySeat && !spectate">
@@ -626,7 +627,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
             <li v-for="h in s.history" :key="h.seq" class="shrink-0 w-[68px] flex flex-col items-center gap-1" :title="`${rec.teamNames[h.team]} ${h.type}: ${h.heroId === null ? 'no ban' : heroName(h.heroId)}`">
               <span :class="['font-mono text-[10px] font-bold', h.type === 'ban' ? 'text-danger' : teamText(h.team)]">{{ h.type === 'ban' ? 'B' : 'P' }}{{ stepOrdinal(h.step) }}</span>
               <div :class="['relative w-full aspect-[3/4] rounded overflow-hidden border bg-raised', h.type === 'ban' ? 'border-danger/50' : h.team === 'amber' ? 'border-amber-team/60' : 'border-sapphire-team/60']">
-                <img v-if="h.heroId !== null" :src="heroes.byId(h.heroId)?.imageUrl ?? undefined" alt="" :class="['absolute inset-0 w-full h-full object-cover object-top', h.type === 'ban' && 'grayscale opacity-60']" />
+                <img v-if="h.heroId !== null" :src="art(h.heroId) ?? undefined" alt="" :class="['absolute inset-0 w-full h-full object-cover object-top', h.type === 'ban' && 'grayscale opacity-60']" />
                 <span v-else class="absolute inset-0 grid place-items-center font-mono text-[9px] uppercase text-muted">No ban</span>
                 <div v-if="h.type === 'ban' && h.heroId !== null" class="absolute left-[-25%] w-[150%] top-1/2 h-0.5 bg-danger rotate-[-45deg]" />
                 <div :class="['absolute inset-x-0 bottom-0 h-1', h.team === 'amber' ? 'bg-amber-team' : 'bg-sapphire-team']" />

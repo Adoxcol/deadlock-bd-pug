@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { api } from '../lib/api';
-export interface Hero { id: number; name: string; imageUrl: string | null; simulated: boolean; heroType?: string | null }
+export interface Hero { id: number; name: string; imageUrl: string | null; simulated: boolean; heroType?: string | null; verticalUrl?: string | null; nameUrl?: string | null; vo?: { pick: string[]; ban: string[] } }
 export const useHeroes = defineStore('heroes', {
   state: () => ({ list: [] as Hero[], source: '' as string, loaded: false }),
   getters: { byId: (s) => (id: number | null | undefined) => s.list.find((h) => h.id === id) },

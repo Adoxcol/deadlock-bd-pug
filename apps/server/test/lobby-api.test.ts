@@ -53,21 +53,24 @@ describe('createCustomLobby (mocked Deadlock API)', () => {
 import { fetchHeroes } from '../src/heroes.js';
 describe('fetchHeroes (mocked deadlock-api assets)', () => {
   it('uses the verified endpoint, keeps playable heroes and prefers the webp hero card', async () => {
-    let url = '';
+    const urls: string[] = [];
     const f = (async (u: string) => {
-      url = u;
+      urls.push(u);
+      if (u.endsWith('/v1/assets/sounds')) return new Response(JSON.stringify({ vo: { inferno: { inferno_select_01: 'https://cdn/s1.mp3', inferno_unselect_01: 'https://cdn/u1.mp3', inferno_happy_01: 'https://cdn/h.mp3' } } }), { status: 200 });
       return new Response(JSON.stringify([
-        { id: 1, name: 'Infernus', hero_type: 'brawler', player_selectable: true, images: { icon_hero_card: 'https://cdn/x.png', icon_hero_card_webp: 'https://cdn/x.webp' } },
+        { id: 1, name: 'Infernus', class_name: 'hero_inferno', hero_type: 'brawler', player_selectable: true, images: { icon_hero_card: 'https://cdn/x.png', icon_hero_card_webp: 'https://cdn/x.webp' } },
         { id: 2, name: 'Old', disabled: true, images: {} },
         { id: 3, name: 'WIP', in_development: true, images: {} },
         { id: 4, name: 'Seven', images: { icon_hero_card: 'https://cdn/7.png' } },
       ]), { status: 200 });
     }) as unknown as typeof fetch;
     const heroes = await fetchHeroes('https://api.example', f);
-    expect(url).toBe('https://api.example/v1/assets/heroes?only_active=true');
+    expect(urls[0]).toBe('https://api.example/v1/assets/heroes?only_active=true');
     expect(heroes.map((h) => h.name)).toEqual(['Infernus', 'Seven']);
     expect(heroes[0]).toMatchObject({ imageUrl: 'https://cdn/x.webp', heroType: 'brawler' });
     expect(heroes[1]!.imageUrl).toBe('https://cdn/7.png');
+    expect(heroes[0]!.vo).toEqual({ pick: ['https://cdn/s1.mp3'], ban: ['https://cdn/u1.mp3'] });
+    expect(heroes[1]!.vo).toBeUndefined();
   });
   it('rejects errors and empty lists so the built-in roster stays in use', async () => {
     await expect(fetchHeroes('https://a', (async () => new Response('{}', { status: 500 })) as unknown as typeof fetch)).rejects.toThrow();
