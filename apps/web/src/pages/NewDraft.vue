@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router';
 import { Swords, ExternalLink } from 'lucide-vue-next';
 import { api } from '../lib/api';
 import OrderTimeline from '../components/draft/OrderTimeline.vue';
-import TeamCrest, { FACTION } from '../components/draft/TeamCrest.vue';
+import FactionMark from '../components/draft/FactionMark.vue';
 import { useSession } from '../stores/session';
 
 const router = useRouter();
@@ -16,7 +16,7 @@ const busy = ref(false);
 const provider = ref<'NATIVE' | 'DEADLOCKLABS' | 'EXTERNAL'>('NATIVE');
 const externalUrl = ref('');
 const f = reactive({
-  name: 'PUG Draft', amberName: 'Team Amber', sapphireName: 'Team Sapphire', format: '6v6', bansPerTeam: 2, timerSeconds: 30,
+  name: 'PUG Draft', amberName: '', sapphireName: '', format: '6v6', bansPerTeam: 2, timerSeconds: 30,
   timeoutBehavior: 'skip', banPhases: 2 as 1 | 2, allowMirrorPicks: false, firstTeam: 'amber', amberCaptainId: '' as string, sapphireCaptainId: '' as string, visibility: 'public',
 });
 const captainOptions = computed(() => [{ value: '', label: 'Open seat' }, ...users.value.map((u) => ({ value: u.id, label: u.displayName }))]);
@@ -31,14 +31,16 @@ const orderPreview = computed(() => {
   else { bans(f.bansPerTeam); picks(0, size * 2); }
   return out;
 });
+// Blank names fall back to the placeholders shown in the inputs.
+const names = computed(() => ({ amberName: f.amberName.trim() || 'Team 1', sapphireName: f.sapphireName.trim() || 'Team 2' }));
 async function submit() {
   busy.value = true; err.value = null;
   try {
     if (provider.value === 'NATIVE') {
-      const r = await api<{ id: string }>('/drafts', { method: 'POST', body: { ...f, banPhases: f.banPhases, amberCaptainId: f.amberCaptainId || null, sapphireCaptainId: f.sapphireCaptainId || null } });
+      const r = await api<{ id: string }>('/drafts', { method: 'POST', body: { ...f, ...names.value, banPhases: f.banPhases, amberCaptainId: f.amberCaptainId || null, sapphireCaptainId: f.sapphireCaptainId || null } });
       router.push(`/draft/${r.id}`);
     } else {
-      await api('/pugs', { method: 'POST', body: { format: f.format, draftProvider: provider.value, amberName: f.amberName, sapphireName: f.sapphireName, externalUrl: externalUrl.value } });
+      await api('/pugs', { method: 'POST', body: { format: f.format, draftProvider: provider.value, ...names.value, externalUrl: externalUrl.value } });
       router.push('/');
     }
   } catch (e) { err.value = (e as Error).message; } finally { busy.value = false; }
@@ -53,18 +55,18 @@ async function submit() {
     </header>
 
     <!-- Factions -->
-    <div class="relative grid md:grid-cols-2 gap-4 md:gap-10">
-      <div class="hidden md:grid absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-14 h-14 rotate-45 place-items-center border-2 border-primary/70 bg-bg shadow-[0_0_24px_-4px_rgba(212,162,76,.6)]">
-        <span class="-rotate-45 font-display text-xl text-primary">VS</span>
-      </div>
-      <div v-for="t in (['amber', 'sapphire'] as const)" :key="t" :class="['card p-5 border-t-2 flex items-center gap-4', t === 'amber' ? 'md:pr-10 !border-t-amber-team bg-gradient-to-br from-amber-team/[0.14] to-surface/90' : 'md:pl-10 !border-t-sapphire-team bg-gradient-to-bl from-sapphire-team/[0.14] to-surface/90 md:flex-row-reverse']">
-        <TeamCrest :team="t" :size="76" class="shrink-0 drop-shadow-[0_0_14px_currentColor]" />
-        <div class="flex-1 min-w-0 space-y-1.5">
-          <label :for="t + 'n'" :class="['block font-mono text-[11px] font-bold uppercase tracking-[0.25em]', t === 'amber' ? 'text-amber-team' : 'text-sapphire-team md:text-right']">{{ FACTION[t] }}</label>
-          <input :id="t + 'n'" v-model="f[t === 'amber' ? 'amberName' : 'sapphireName']" maxlength="32"
-            :class="['w-full bg-transparent border-0 border-b-2 border-line focus:outline-none font-display text-xl xl:text-2xl uppercase pb-1', t === 'amber' ? 'focus:border-amber-team text-amber-team' : 'focus:border-sapphire-team text-sapphire-team md:text-right']" />
+    <div class="relative grid md:grid-cols-[1fr_auto_1fr] items-end gap-4 md:gap-8 border border-line/70 px-6 py-6 bg-[linear-gradient(90deg,rgba(232,163,58,.16),rgba(14,12,10,.6)_45%,rgba(14,12,10,.6)_55%,rgba(90,143,224,.16))]">
+      <template v-for="(t, i) in (['amber', 'sapphire'] as const)" :key="t">
+        <div v-if="i === 1" class="hidden md:grid self-center w-16 h-16 place-items-center bg-bg border border-line rotate-[8deg] shadow-[0_8px_24px_rgba(0,0,0,.6)]">
+          <span class="-rotate-[8deg] font-display text-xl uppercase text-text">{{ f.format }}</span>
         </div>
-      </div>
+        <div :class="['min-w-0 space-y-2', t === 'sapphire' && 'md:text-right']">
+          <label :for="t + 'n'" class="block"><FactionMark :team="t" :size="18" /></label>
+          <input :id="t + 'n'" v-model="f[t === 'amber' ? 'amberName' : 'sapphireName']" maxlength="32" :placeholder="t === 'amber' ? 'TEAM 1' : 'TEAM 2'"
+            :class="['w-full bg-transparent border-0 border-b-2 focus:outline-none font-display text-3xl xl:text-4xl uppercase pb-2 transition-colors',
+              t === 'amber' ? 'text-amber-team placeholder:text-amber-team/45 border-amber-team/40 focus:border-amber-team' : 'text-sapphire-team placeholder:text-sapphire-team/45 border-sapphire-team/40 focus:border-sapphire-team md:text-right']" />
+        </div>
+      </template>
     </div>
 
     <div class="grid lg:grid-cols-[1fr_1.4fr] gap-4">
@@ -106,13 +108,13 @@ async function submit() {
             </div></div>
           <div><span class="label">First pick/ban</span>
             <div class="grid grid-cols-2 gap-1">
-              <button v-for="t in (['amber', 'sapphire'] as const)" :key="t" type="button" :class="['h-9 rounded border font-display uppercase text-sm truncate px-2', f.firstTeam === t ? (t === 'amber' ? 'border-amber-team bg-amber-team/20 text-amber-team' : 'border-sapphire-team bg-sapphire-team/20 text-sapphire-team') : 'border-line text-muted hover:text-text']" @click="f.firstTeam = t">{{ (t === 'amber' ? f.amberName : f.sapphireName) || t }}</button>
+              <button v-for="t in (['amber', 'sapphire'] as const)" :key="t" type="button" :class="['h-9 rounded border font-display uppercase text-sm truncate px-2', f.firstTeam === t ? (t === 'amber' ? 'border-amber-team bg-amber-team/20 text-amber-team' : 'border-sapphire-team bg-sapphire-team/20 text-sapphire-team') : 'border-line text-muted hover:text-text']" @click="f.firstTeam = t">{{ t === 'amber' ? names.amberName : names.sapphireName }}</button>
             </div></div>
           <div v-if="f.bansPerTeam >= 2"><label class="label" for="bp">Ban phases</label><UiSelect id="bp" v-model="f.banPhases" :options="[{ value: 2, label: 'Two phases (bans → picks → bans → picks)' }, { value: 1, label: 'One phase (all bans first)' }]" /></div>
           <div><label class="label" for="to">When a ban timer runs out</label><UiSelect id="to" v-model="f.timeoutBehavior" :options="[{ value: 'skip', label: 'No ban (ban is lost)' }, { value: 'random', label: 'Ban the hero being looked at, else random' }, { value: 'pause', label: 'Pause for a moderator' }]" /></div>
           <template v-if="session.can('MODERATOR')">
-          <div><label class="label" for="ac">{{ f.amberName || 'Amber' }} captain</label><UiSelect id="ac" v-model="f.amberCaptainId" :options="captainOptions" /></div>
-          <div><label class="label" for="sc">{{ f.sapphireName || 'Sapphire' }} captain</label><UiSelect id="sc" v-model="f.sapphireCaptainId" :options="captainOptions" /></div>
+          <div><label class="label" for="ac">{{ names.amberName }} captain</label><UiSelect id="ac" v-model="f.amberCaptainId" :options="captainOptions" /></div>
+          <div><label class="label" for="sc">{{ names.sapphireName }} captain</label><UiSelect id="sc" v-model="f.sapphireCaptainId" :options="captainOptions" /></div>
           </template>
           <div><label class="label" for="vis">Visibility</label><UiSelect id="vis" v-model="f.visibility" :options="[{ value: 'public', label: 'Public — anyone can spectate' }, { value: 'private', label: 'Private — logged-in members only' }]" /></div>
           <label class="flex items-center gap-2 text-sm sm:col-span-2"><input v-model="f.allowMirrorPicks" type="checkbox" class="accent-[#d4a24c]" />Allow both teams to pick the same hero</label>
@@ -121,7 +123,7 @@ async function submit() {
     </div>
 
     <div v-if="provider === 'NATIVE'" class="card p-5 space-y-2"><h2 class="h-section">Draft order</h2>
-      <OrderTimeline :sequence="orderPreview" :team-names="{ amber: f.amberName || 'Amber', sapphire: f.sapphireName || 'Sapphire' }" />
+      <OrderTimeline :sequence="orderPreview" :team-names="{ amber: names.amberName, sapphire: names.sapphireName }" />
       <p class="text-xs text-muted">After creating, share the code or link. Captains take a seat and ready up; players join a team so their captain can assign them a hero.</p>
     </div>
     <p v-if="err" class="text-sm text-danger" role="alert">{{ err }}</p>

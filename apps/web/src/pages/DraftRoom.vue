@@ -10,6 +10,7 @@ import {
 import { sfx, volume, playVoice } from '../lib/sfx';
 import RevealSplash from '../components/draft/RevealSplash.vue';
 import TeamCrest, { FACTION } from '../components/draft/TeamCrest.vue';
+import DraftIntro from '../components/draft/DraftIntro.vue';
 import { api, ApiError } from '../lib/api';
 import { realtime } from '../lib/ws';
 import { useHeroes } from '../stores/heroes';
@@ -226,10 +227,16 @@ watch(() => s.value?.history?.length ?? 0, (len, prev) => {
   if (reducedMotion) return;
   clearTimeout(splashTimer);
   splash.value = { key: last.seq, heroId: last.heroId, type: last.type, team: last.team };
-  splashTimer = window.setTimeout(() => (splash.value = null), 1650);
+  splashTimer = window.setTimeout(() => (splash.value = null), 2250);
 });
 watch(myTurn, (v) => { if (v) sfx.turn(); });
 watch(remaining, (r, prev) => { if (r !== null && prev !== null && r < prev && r <= 5 && r > 0 && s.value?.status === 'drafting') sfx.tick(r <= 3); });
+// Versus intro when the lobby turns into a live draft.
+const intro = ref(0);
+watch(() => s.value?.status, (st, prev) => {
+  if (st !== 'drafting' || prev !== 'waiting' || reducedMotion) return;
+  intro.value++; setTimeout(() => sfx.ban(), 400); setTimeout(() => (intro.value = 0), 2600);
+});
 watch(() => s.value?.status, (st, prev) => {
   if (st !== 'completed' || !prev || prev === 'completed') return;
   setTimeout(() => sfx.complete(), 700);
@@ -265,8 +272,10 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
 
 <template>
   <div :class="broadcast ? 'min-h-screen bg-bg p-6' : ''">
+    <DraftIntro v-if="intro" :key="intro" :team-names="rec.teamNames"
+      :subtitle="`${s.config.format} · ${s.config.bansPerTeam} bans per team · ${s.config.timerSeconds ? s.config.timerSeconds + 's per turn' : 'no timer'}`" />
     <RevealSplash v-if="splash" :key="splash.key" :type="splash.type" :team="splash.team" :team-name="rec.teamNames[splash.team]"
-      :name="heroName(splash.heroId)" :src="heroes.byId(splash.heroId)?.imageUrl" />
+      :name="heroName(splash.heroId)" :src="heroes.byId(splash.heroId)?.imageUrl" :name-url="heroes.byId(splash.heroId)?.nameUrl" :bg-url="heroes.byId(splash.heroId)?.backgroundUrl" />
     <div v-if="confetti" :key="confetti" class="fixed inset-0 z-50 pointer-events-none overflow-hidden" aria-hidden="true">
       <span v-for="(c, i) in confettiBits" :key="i" class="absolute -top-4 animate-confetti"
         :style="{ left: c.left, animationDelay: c.delay, width: `${c.size}px`, height: `${c.round ? c.size : c.size * 1.8}px`, background: c.color, borderRadius: c.round ? '9999px' : '2px' }" />
@@ -431,12 +440,21 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                 <div v-for="(p, i) in slots(team, 'pick')" :key="`p${i}-${p.heroId}`"
                   :class="['relative overflow-hidden rounded-sm border aspect-[3/4] lg:aspect-auto lg:h-[calc((100vh-20.5rem)/6)] lg:min-h-[64px] bg-gradient-to-br',
                     team === 'amber' ? 'from-amber-team/[0.08] to-surface/80' : 'from-sapphire-team/[0.08] to-surface/80',
-                    p.active ? (team === 'amber' ? 'border-amber-team animate-glow' : 'border-sapphire-team animate-glow') : 'border-line']">
+                    p.active ? (team === 'amber' ? 'border-amber-team border-2 animate-glow' : 'border-sapphire-team border-2 animate-glow') : p.heroId !== null ? (team === 'amber' ? 'border-amber-team/50' : 'border-sapphire-team/50') : 'border-line']">
                   <template v-if="p.heroId !== null">
-                    <img :src="heroes.byId(p.heroId)?.imageUrl ?? undefined" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover blur-xl scale-125 opacity-40" />
-                    <img :src="heroes.byId(p.heroId)?.imageUrl ?? undefined" alt="" :class="['absolute inset-y-0 h-full w-auto max-w-[70%] object-cover object-top lg:aspect-[3/4]', team === 'amber' ? 'right-0' : 'left-0', lastStepKey === `${team}-pick-${i}` && 'animate-slot-in']" />
-                    <div :class="['absolute inset-0', team === 'amber' ? 'bg-gradient-to-r from-black/80 via-black/20 to-transparent' : 'bg-gradient-to-l from-black/80 via-black/20 to-transparent']" />
-                    <div :class="['absolute bottom-1.5 font-display text-sm uppercase leading-none text-text drop-shadow', team === 'amber' ? 'left-2' : 'right-2']">{{ heroName(p.heroId) }}</div>
+                    <div :class="['absolute inset-0', lastStepKey === `${team}-pick-${i}` && 'animate-slot-in']">
+                      <img v-if="heroes.byId(p.heroId)?.backgroundUrl" :src="heroes.byId(p.heroId)!.backgroundUrl!" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover object-right" />
+                      <img v-else :src="heroes.byId(p.heroId)?.imageUrl ?? undefined" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover blur-xl scale-125 opacity-40" />
+                      <img :src="heroes.byId(p.heroId)?.imageUrl ?? undefined" alt="" :class="['absolute top-0 h-[130%] w-auto object-cover object-top drop-shadow-[0_6px_16px_rgba(0,0,0,.6)]', team === 'amber' ? 'right-[6%]' : 'left-[6%]']" />
+                      <div :class="['absolute inset-0', team === 'amber' ? 'bg-gradient-to-r from-black/70 via-black/10 to-transparent' : 'bg-gradient-to-l from-black/70 via-black/10 to-transparent']" />
+                      <img v-if="heroes.byId(p.heroId)?.nameUrl" :src="heroes.byId(p.heroId)!.nameUrl!" :alt="heroName(p.heroId)"
+                        :class="['absolute bottom-2 h-[32%] max-h-9 max-w-[75%] w-auto object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,.9)]', team === 'amber' ? 'left-2.5 object-left' : 'right-2.5 object-right']" />
+                      <div v-else :class="['absolute bottom-1.5 font-display text-sm uppercase leading-none text-text drop-shadow', team === 'amber' ? 'left-2' : 'right-2']">{{ heroName(p.heroId) }}</div>
+                    </div>
+                  </template>
+                  <template v-else-if="p.active">
+                    <div :class="['absolute inset-0', team === 'amber' ? 'bg-[repeating-linear-gradient(135deg,rgba(232,163,58,.16)_0_10px,transparent_10px_22px)]' : 'bg-[repeating-linear-gradient(135deg,rgba(90,143,224,.18)_0_10px,transparent_10px_22px)]']" />
+                    <span :class="['absolute top-2 px-2 py-0.5 font-display text-xs uppercase -skew-x-6 text-bg', team === 'amber' ? 'left-0 bg-amber-team' : 'right-0 bg-sapphire-team']">{{ step?.type === 'ban' ? 'Up next' : 'Choosing' }}</span>
                   </template>
                   <span :class="['absolute top-1/2 -translate-y-1/2 font-display text-4xl lg:text-5xl leading-none', p.heroId !== null ? 'opacity-0' : team === 'amber' ? 'right-3 text-amber-team/25' : 'left-3 text-sapphire-team/25']">{{ i + 1 }}</span>
                 </div>
@@ -489,11 +507,12 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                   </div>
                   <p v-if="!spectate && !myTurn && s.status === 'drafting'" class="text-xs text-muted">{{ mySeat ? 'Not your turn yet.' : 'You are watching. Only captains can ban and pick.' }}</p>
                   <PageState :empty="!roster.length" empty-text="No heroes match your search.">
-                    <div class="grid grid-cols-[repeat(auto-fill,minmax(56px,1fr))] gap-1.5 max-h-[50vh] xl:max-h-none xl:flex-1 xl:min-h-0 content-start overflow-y-auto p-1 -m-1" @pointerleave="hovered = null">
+                    <div class="grid grid-cols-[repeat(auto-fill,minmax(46px,1fr))] xl:grid-cols-8 xl:[grid-template-rows:var(--hero-rows)] gap-1 max-h-[50vh] xl:max-h-none xl:flex-1 xl:min-h-0 content-start overflow-y-auto xl:overflow-hidden p-1 -m-1"
+                      :style="{ '--hero-rows': `repeat(${Math.max(5, Math.ceil(roster.length / 8))}, minmax(0, 1fr))` }" @pointerleave="hovered = null">
                       <button v-for="h in roster" :key="h.id" type="button" data-hero
                         :aria-disabled="!myTurn || !!unavailableReason(h.id) || pending"
                         :title="unavailableReason(h.id) ? `${h.name} (${unavailableReason(h.id)})` : h.name"
-                        :class="['group relative aspect-[5/6] overflow-hidden border bg-gradient-to-b from-[#2a2622] to-[#141210] transition-[transform,border-color,filter] duration-150 ease-out',
+                        :class="['group relative aspect-[5/6] xl:aspect-auto overflow-hidden border bg-gradient-to-b from-[#2a2622] to-[#141210] transition-[transform,border-color,filter] duration-150 ease-out',
                           selected === h.id ? (step?.type === 'ban' ? 'border-danger ring-2 ring-danger z-10 -translate-y-0.5' : 'border-primary ring-2 ring-primary z-10 -translate-y-0.5') : 'border-black/60',
                           unavailableReason(h.id) ? 'opacity-30 grayscale' : 'hover:border-text/80 hover:-translate-y-0.5 hover:z-10 brightness-[.85] hover:brightness-110 cursor-pointer']"
                         @click="choose(h.id)" @pointerenter="hovered = h.id">
