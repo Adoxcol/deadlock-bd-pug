@@ -9,7 +9,7 @@ defineProps<{ name: string; src?: string | null; nameUrl?: string | null; bgUrl?
     <!-- Hero art -->
     <div class="rv-art absolute inset-y-0 right-0 w-[62%] overflow-hidden [clip-path:polygon(14%_0,100%_0,100%_100%,0_100%)] bg-[#0b0a09]">
       <img v-if="bgUrl" :src="bgUrl" alt="" class="absolute inset-0 w-full h-full object-cover object-right opacity-90" />
-      <img v-if="src" :src="src" alt="" :class="['absolute right-[8%] bottom-0 h-[88%] w-auto object-contain object-bottom drop-shadow-[0_10px_40px_rgba(0,0,0,.7)]', type === 'ban' && 'grayscale']" />
+      <img v-if="src" :src="src" alt="" :class="['absolute right-[10%] bottom-0 h-[78%] max-h-[570px] w-auto object-contain object-bottom drop-shadow-[0_10px_40px_rgba(0,0,0,.7)]', type === 'ban' && 'grayscale']" />
       <div v-if="type === 'ban'" class="absolute left-[-10%] w-[120%] top-1/2 h-2 bg-danger shadow-[0_0_18px_#cf4a3c] rotate-[-14deg] rv-slash" />
     </div>
     <!-- Team banner -->

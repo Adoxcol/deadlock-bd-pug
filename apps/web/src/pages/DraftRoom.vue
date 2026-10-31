@@ -237,10 +237,18 @@ watch(() => s.value?.status, (st, prev) => {
   if (st !== 'drafting' || prev !== 'waiting' || reducedMotion) return;
   intro.value++; setTimeout(() => sfx.ban(), 400); setTimeout(() => (intro.value = 0), 2600);
 });
+// Keep the board on screen until the final pick's reveal has played, then show the results.
+const holdBoard = ref(false);
+const view = computed(() => (holdBoard.value ? 'drafting' : s.value?.status));
 watch(() => s.value?.status, (st, prev) => {
   if (st !== 'completed' || !prev || prev === 'completed') return;
-  setTimeout(() => sfx.complete(), 700);
-  if (!reducedMotion) { confetti.value++; setTimeout(() => (confetti.value = 0), 3800); }
+  const hold = reducedMotion ? 0 : 2300;
+  holdBoard.value = hold > 0;
+  setTimeout(() => {
+    holdBoard.value = false;
+    setTimeout(() => sfx.complete(), 300);
+    if (!reducedMotion) { confetti.value++; setTimeout(() => (confetti.value = 0), 3800); }
+  }, hold);
 });
 const muted = computed(() => volume.value === 0);
 let lastVolume = volume.value || 0.6;
@@ -317,7 +325,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
         <div v-if="actionError" class="card border-danger/40 px-4 py-2 text-sm text-danger flex items-center gap-2" role="alert"><AlertTriangle class="w-4 h-4" />{{ actionError }}</div>
 
         <!-- ================= LOBBY ================= -->
-        <template v-if="s.status === 'waiting'">
+        <template v-if="view === 'waiting'">
           <div class="text-center space-y-1">
             <div class="font-mono text-[11px] font-bold uppercase tracking-[0.25em] text-muted">Room code</div>
             <div class="font-display text-4xl tracking-[0.15em] text-primary">{{ rec.code }}</div>
@@ -399,7 +407,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
         </template>
 
         <!-- ================= DRAFTING ================= -->
-        <template v-else-if="s.status === 'drafting' || s.status === 'paused'">
+        <template v-else-if="view === 'drafting' || view === 'paused'">
           <!-- Top bar: teams, bans, timer -->
           <div class="card overflow-hidden grid grid-cols-[1fr_auto_1fr] items-stretch">
             <div v-for="t in SIDES" :key="t" :class="['flex items-center gap-3 px-3 sm:px-4 py-2 min-w-0', t === 'amber' ? 'order-1 bg-gradient-to-r from-amber-team/20 to-transparent' : 'order-3 flex-row-reverse text-right bg-gradient-to-l from-sapphire-team/20 to-transparent',
@@ -583,7 +591,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
         </template>
 
         <!-- ================= RESULT ================= -->
-        <template v-else-if="s.status === 'completed'">
+        <template v-else-if="view === 'completed'">
           <div class="relative flex flex-col items-center animate-fade-up">
             <div class="relative z-10 -mb-3 px-3 py-1 bg-text text-bg font-display text-xs uppercase tracking-wider -rotate-1 shadow-lg flex items-center gap-1.5"><Check class="w-3.5 h-3.5" />Draft complete</div>
             <template v-for="(t, ti) in SIDES" :key="t">
@@ -644,7 +652,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
         <div v-else class="card p-6 text-center text-muted">This draft was cancelled.</div>
 
         <!-- History -->
-        <section v-if="!broadcast && s.history.length && s.status === 'completed'" class="card p-4">
+        <section v-if="!broadcast && s.history.length && view === 'completed'" class="card p-4">
           <h2 class="h-section flex items-center gap-2 mb-3"><History class="w-4 h-4" />Pick &amp; ban order</h2>
           <ol class="flex gap-1.5 overflow-x-auto pb-2">
             <li v-for="h in s.history" :key="h.seq" class="shrink-0 w-[68px] flex flex-col items-center gap-1" :title="`${rec.teamNames[h.team]} ${h.type}: ${h.heroId === null ? 'no ban' : heroName(h.heroId)}`">
