@@ -10,6 +10,7 @@ export interface CreateDraftInput {
   format?: MatchFormat; bansPerTeam?: number; timerSeconds?: TimerSeconds; timeoutBehavior?: TimeoutBehavior;
   allowMirrorPicks?: boolean; firstTeam?: TeamSide; banPhases?: 1 | 2; sequence?: DraftConfig['sequence'];
   captains?: Record<TeamSide, string | null>; code?: string; visibility?: 'public' | 'private'; simulated?: boolean;
+  rosterLocked?: boolean; members?: Record<TeamSide, string[]>;
 }
 
 // No I/O/0/1 to avoid misreads when codes are read aloud on voice chat.
@@ -39,6 +40,8 @@ export class DraftService {
       visibility: input.visibility ?? 'public', simulated: input.simulated ?? false,
       state: createDraftState(config, input.captains ?? { amber: null, sapphire: null }),
     };
+    if (input.rosterLocked) rec.state.rosterLocked = true;
+    if (input.members) rec.state.members = structuredClone(input.members);
     await this.store.create(rec);
     this.hub.publish('dashboard', 'draft.created', { id: rec.id });
     return rec;
@@ -71,9 +74,8 @@ export class DraftService {
   private async rematch(old: DraftRecord): Promise<DraftRecord> {
     const next = await this.create({ name: old.name, pugId: old.pugId, teamNames: old.teamNames, visibility: old.visibility, simulated: old.simulated, code: old.code ?? undefined,
       format: old.state.config.format, bansPerTeam: old.state.config.bansPerTeam, timerSeconds: old.state.config.timerSeconds,
-      timeoutBehavior: old.state.config.timeoutBehavior, allowMirrorPicks: old.state.config.allowMirrorPicks, sequence: old.state.config.sequence, captains: old.state.captains });
-    next.state.members = structuredClone(old.state.members);
-    await this.store.save(next.id, next.state.seq, next.state, []);
+      timeoutBehavior: old.state.config.timeoutBehavior, allowMirrorPicks: old.state.config.allowMirrorPicks, sequence: old.state.config.sequence, captains: old.state.captains,
+      rosterLocked: old.state.rosterLocked, members: old.state.members });
     this.hub.publish(`draft:${old.id}`, 'draft.redirect', { id: next.id, code: next.code });
     return next;
   }

@@ -32,6 +32,8 @@ export interface DraftHistoryEntry {
 }
 
 export interface DraftState {
+  /** PUG teams are settled before hero drafting and cannot self-edit afterward. */
+  rosterLocked?: boolean;
   status: DraftStatus;
   config: DraftConfig;
   captains: Record<TeamSide, string | null>;

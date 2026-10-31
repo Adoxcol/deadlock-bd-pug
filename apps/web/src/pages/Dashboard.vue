@@ -39,7 +39,7 @@ const activity = computed(() => {
   if (!data.value) return [];
   const pugDraftIds = new Set(data.value.sessions.map((s: any) => s.draft?.id).filter(Boolean));
   return [
-    ...data.value.sessions.map((s: any) => ({ key: s.id, title: `PUG #${s.number}`, status: s.match?.state ?? s.draft?.status ?? s.status.toLowerCase(), teams: s.teams, sub: `${s.players} players · ${s.format}`, since: s.createdAt, simulated: s.isSimulated, picks: null, link: s.match ? `/matches/${s.match.id}/live` : s.draft ? `/draft/${s.draft.id}/spectate` : null, action: s.match ? 'View Live' : 'View Draft' })),
+    ...data.value.sessions.map((s: any) => ({ key: s.id, title: `PUG #${s.number}`, status: s.match?.state ?? s.draft?.status ?? s.status.toLowerCase(), teams: s.teams, sub: `${s.players} players · ${s.format}`, since: s.createdAt, simulated: s.isSimulated, picks: null, link: s.match ? `/matches/${s.match.id}/live` : s.draft ? `/draft/${s.draft.id}/spectate` : `/pugs/${s.id}`, action: s.match ? 'View Live' : s.draft ? 'View Draft' : 'Join PUG' })),
     ...data.value.drafts.filter((d: any) => !pugDraftIds.has(d.id)).map((d: any) => ({ key: d.id, title: d.name, status: d.status, teams: d.teamNames, sub: `${d.players} in lobby · ${d.format}`, since: d.startedAt, simulated: d.simulated, picks: d.picks, link: `/draft/${d.id}${d.status === 'waiting' ? '' : '/spectate'}`, action: d.status === 'waiting' ? 'Join' : 'View Draft' })),
   ];
 });

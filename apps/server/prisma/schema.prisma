@@ -125,6 +125,8 @@ model Season {
 }
 
 model PugSession {
+  formation      Json?
+  formationSeq   Int                 @default(0)
   id             String              @id @default(cuid())
   number         Int                 @unique @default(autoincrement())
   guildId        String?

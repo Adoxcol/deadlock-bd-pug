@@ -47,7 +47,7 @@ export async function startBot(token: string, appId: string, guildId: string | u
 
   async function handle(i: ChatInputCommandInteraction, cmd: string, userId: string | null) {
     switch (cmd) {
-      case 'pug create': { const p = await deps.createPug(userId!); await i.reply({ content: `PUG #${p.number} created.`, components: [link(`/admin?pug=${p.id}`, 'Manage PUG')] }); return; }
+      case 'pug create': { const p = await deps.createPug(userId!); await i.reply({ content: `PUG #${p.number} created.`, components: [link(`/pugs/${p.id}`, 'Manage PUG')] }); return; }
       case 'pug status': {
         const pugs = await deps.db.pugSession.findMany({ where: { status: { in: ['WAITING', 'DRAFTING', 'LIVE'] } }, orderBy: { number: 'desc' }, take: 10 });
         await i.reply({ embeds: [new EmbedBuilder().setTitle('Active PUGs').setDescription(pugs.map((p) => `**#${p.number}** — ${p.status}`).join('\n') || 'No active PUGs.')] }); return;

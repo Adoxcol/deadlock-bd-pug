@@ -5,14 +5,15 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, randomInt } from 'node:crypto';
 import { z } from 'zod';
-import { PrismaClient, type User } from '@prisma/client';
+import { PrismaClient, type User, type Prisma } from '@prisma/client';
 import { Redis } from 'ioredis';
 import type { Config } from './config.js';
 import { Hub } from './realtime/hub.js';
-import { DraftService } from './draft/service.js';
-import { DraftError, TEAM_SIZE } from './draft/engine.js';
+import { DraftService, generateRoomCode } from './draft/service.js';
+import { DraftError, TEAM_SIZE, applyFormationCommand, createDraftState, buildDefaultSequence } from './draft/engine.js';
+import { newFormation, type Formation } from './draft/formation.js';
 import { RedisLock, MemoryLock, LockBusyError } from './draft/lock.js';
 import { PrismaDraftStore, syncHeroes } from './db/draftStore.js';
 import { PrismaResultsRepo } from './db/resultsRepo.js';
@@ -272,8 +273,8 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     amberName: z.string().min(1).max(32).default('Team Amber'), sapphireName: z.string().min(1).max(32).default('Team Sapphire'),
     externalUrl: z.string().url().optional(),
   });
-  async function createPug(userId: string, body: z.infer<typeof createPugBody>, simulated = false) {
-    const pug = await db.pugSession.create({ data: { format: body.format, draftProvider: body.draftProvider, createdById: userId, isSimulated: simulated, teams: { create: [{ side: 'AMBER', name: body.amberName }, { side: 'SAPPHIRE', name: body.sapphireName }] } } });
+  async function createPug(userId: string, body: z.infer<typeof createPugBody>, simulated = false, formTeams = true) {
+    const pug = await db.pugSession.create({ data: { format: body.format, draftProvider: body.draftProvider, createdById: userId, isSimulated: simulated, ...(formTeams && body.draftProvider === 'NATIVE' ? { formation: newFormation() as unknown as Prisma.InputJsonValue } : {}), teams: { create: [{ side: 'AMBER', name: body.amberName }, { side: 'SAPPHIRE', name: body.sapphireName }] } } });
     if (body.externalUrl && body.draftProvider !== 'NATIVE') {
       const p = providers[body.draftProvider === 'DEADLOCKLABS' ? 'deadlocklabs' : 'external'];
       if (!p.validateUrl!(body.externalUrl)) throw Object.assign(new Error(`URL is not a valid ${p.displayName} link`), { statusCode: 400 });
@@ -296,10 +297,66 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   });
   app.post('/api/pugs/:id/participants', { preHandler: requireRole('MODERATOR') }, async (req) => {
     const { id } = req.params as { id: string };
+    const pug = await db.pugSession.findUniqueOrThrow({ where: { id } });
+    if (pug.formation) throw Object.assign(new Error('Use the PUG room to form teams. Rosters cannot be overwritten.'), { statusCode: 409 });
     const b = z.object({ userId: z.string(), team: z.enum(['AMBER', 'SAPPHIRE']).nullable(), isCaptain: z.boolean().default(false) }).parse(req.body);
     const row = await db.pugParticipant.upsert({ where: { pugId_userId: { pugId: id, userId: b.userId } }, create: { pugId: id, ...b }, update: b });
     await audit(db, req.user!.id, 'pug.participant', 'PugSession', id, null, b);
     return row;
+  });
+  const formationBody = z.object({
+    expectedSeq: z.number().int().min(0),
+    command: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('join') }), z.object({ kind: z.literal('leave') }), z.object({ kind: z.literal('toss') }),
+      z.object({ kind: z.literal('captain'), seat: z.enum(['a', 'b']) }),
+      z.object({ kind: z.literal('team'), seat: z.enum(['a', 'b']).nullable() }),
+      z.object({ kind: z.literal('choice'), advantage: z.enum(['first', 'side']) }),
+      z.object({ kind: z.literal('side'), side: z.enum(['amber', 'sapphire']) }),
+      z.object({ kind: z.literal('pick'), userId: z.string() }),
+      z.object({ kind: z.literal('skip'), agree: z.boolean() }),
+    ]),
+  });
+  const formationLock = redis ? new RedisLock(redis) : new MemoryLock();
+  app.post('/api/pugs/:id/formation', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 30, timeWindow: '10 seconds' } } }, async (req) => {
+    const { id } = req.params as { id: string };
+    const { command, expectedSeq } = formationBody.parse(req.body);
+    const result = await formationLock.withLock(`pug:${id}`, () => db.$transaction(async (tx) => {
+      const pug = await tx.pugSession.findUniqueOrThrow({ where: { id }, include: { teams: true } });
+      if (!pug.formation || pug.status !== 'WAITING') throw Object.assign(new Error('This PUG is not accepting team selection.'), { statusCode: 409 });
+      if (pug.isSimulated !== req.user!.isSimulated) throw Object.assign(new Error('Simulated and real players cannot share a PUG.'), { statusCode: 409 });
+      const size = TEAM_SIZE[pug.format as keyof typeof TEAM_SIZE];
+      const next = applyFormationCommand(pug.formation as unknown as Formation, command, req.user!.id, size, expectedSeq, () => randomInt(2) === 0 ? 'a' : 'b');
+      // The compare-and-swap also protects across processes if a Redis lock expires.
+      const updated = await tx.pugSession.updateMany({ where: { id, formationSeq: expectedSeq, status: 'WAITING' }, data: { formationSeq: next.seq } });
+      if (updated.count !== 1) throw Object.assign(new Error('Room changed. Refresh and try again.'), { statusCode: 409 });
+      const users = await tx.user.findMany({ where: { id: { in: next.players } } });
+      await tx.pugParticipant.deleteMany({ where: { pugId: id } });
+      const participants = users.map((u) => {
+        const seat = (['a', 'b'] as const).find((t) => next.teams[t].includes(u.id));
+        return { userId: u.id, team: seat ? toSide(next.sides[seat]) : null, isCaptain: Object.values(next.captains).includes(u.id) };
+      });
+      await tx.pugParticipant.createMany({ data: participants.map((p) => ({ ...p, pugId: id })) });
+      if (next.phase === 'complete') {
+        next.draftId = randomUUID();
+        const captains: Record<TeamSide, string | null> = { amber: null, sapphire: null };
+        for (const t of ['a', 'b'] as const) captains[next.sides[t]] = next.captains[t];
+        // Hero order remains a separate rule: Amber starts, regardless of first player pick.
+        const state = createDraftState({ format: pug.format as keyof typeof TEAM_SIZE, bansPerTeam: 2, timerSeconds: 30, timeoutBehavior: 'skip', allowMirrorPicks: false, sequence: buildDefaultSequence(pug.format as keyof typeof TEAM_SIZE, 2, 'amber', pug.format === '6v6' ? 2 : 1) }, captains);
+        state.rosterLocked = true;
+        for (const t of ['a', 'b'] as const) state.members[next.sides[t]] = next.teams[t].filter((uid) => uid !== next.captains[t]);
+        await tx.draftRoom.create({ data: {
+          id: next.draftId, code: generateRoomCode(), pugId: id, name: `${pug.isSimulated ? '[SIM] ' : ''}PUG #${pug.number} hero draft`,
+          amberName: pug.teams.find((t) => t.side === 'AMBER')!.name, sapphireName: pug.teams.find((t) => t.side === 'SAPPHIRE')!.name,
+          isSimulated: pug.isSimulated, createdById: req.user!.id, config: state.config as unknown as Prisma.InputJsonValue, state: state as unknown as Prisma.InputJsonValue,
+          participants: { create: participants.map((p) => ({ ...p, displayNameSnapshot: users.find((u) => u.id === p.userId)!.displayName })) },
+        } });
+      }
+      await tx.pugSession.update({ where: { id }, data: { formation: next as unknown as Prisma.InputJsonValue } });
+      await tx.auditLog.create({ data: { actorId: req.user!.id, action: `pug.${command.kind}`, entityType: 'PugSession', entityId: id, before: pug.formation as Prisma.InputJsonValue, after: next as unknown as Prisma.InputJsonValue } });
+      return next;
+    }));
+    hub.publish('dashboard', 'pug.updated', { id });
+    return result;
   });
   app.post('/api/pugs/:id/cancel', { preHandler: requireRole('MODERATOR') }, async (req) => {
     const { id } = req.params as { id: string };
@@ -336,6 +393,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   });
   app.post('/api/drafts', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
     const b = createDraftBody.parse(req.body);
+    if (b.pugId) {
+      const pug = await db.pugSession.findUniqueOrThrow({ where: { id: b.pugId } });
+      if (pug.formation) throw Object.assign(new Error('Open the PUG room to complete or skip team selection.'), { statusCode: 409 });
+    }
     // Pre-assigning captains is a moderator tool; everyone else creates an open lobby and claims seats.
     if (!isMod(req.user)) { b.amberCaptainId = null; b.sapphireCaptainId = null; }
     for (const cid of [b.amberCaptainId, b.sapphireCaptainId]) if (cid && !(await db.user.findUnique({ where: { id: cid } }))) throw Object.assign(new Error('Captain not found'), { statusCode: 400 });
@@ -594,7 +655,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       }));
       let season = await db.season.findFirst({ where: { isActive: true } });
       if (!season) season = await db.season.create({ data: { name: '[SIM] Simulation Season', isActive: true, isSimulated: true, startsAt: new Date() } });
-      const pug = await createPug(req.user!.id, { format: b.format, draftProvider: 'NATIVE', amberName: 'Team Amber', sapphireName: 'Team Sapphire' }, true);
+      const pug = await createPug(req.user!.id, { format: b.format, draftProvider: 'NATIVE', amberName: 'Team Amber', sapphireName: 'Team Sapphire' }, true, false);
       const amber = players.slice(0, size), sapphire = players.slice(size);
       await db.pugParticipant.createMany({ data: players.map((p, i) => ({ pugId: pug.id, userId: p.id, team: i < size ? 'AMBER' : 'SAPPHIRE', isCaptain: i % size === 0 })) });
       const rec = await drafts.create({ name: `[SIM] PUG #${pug.number} draft`, pugId: pug.id, format: b.format, timerSeconds: 30, captains: { amber: amber[0]!.id, sapphire: sapphire[0]!.id }, simulated: true });

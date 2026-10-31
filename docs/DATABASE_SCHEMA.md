@@ -8,3 +8,6 @@ Source of truth: `apps/server/prisma/schema.prisma`. Highlights:
 Tables: User, DiscordAccount, SteamAccount, Guild, PugSession, PugParticipant, Team, DraftRoom, DraftParticipant, DraftAction,
 DraftSelection, DraftBan, ExternalDraftLink, Match, MatchParticipant, MatchEvent, MatchResult, PlayerStatistic, PlayerRating,
 RatingTransaction, Season, DiscordNotification, AuditLog, Hero.
+
+
+`PugSession.formation` stores the optional authoritative team-formation snapshot (captains, player pool, toss outcome, sides, consent, pick history, and resulting draft ID). `formationSeq` is the optimistic concurrency version. Existing PUGs have a null formation and retain manual behavior. Formation actions and snapshots are recorded in `AuditLog` in the same transaction as roster changes.

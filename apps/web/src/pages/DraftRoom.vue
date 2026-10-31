@@ -359,14 +359,14 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                 </div>
                 <div v-if="!s.captains[t]" class="flex items-center gap-3">
                   <span class="text-sm text-muted">Seat's free</span>
-                  <button v-if="!spectate" class="btn-primary !h-8 ml-auto" :disabled="pending" @click="command({ kind: 'claimSeat', team: t })"><Crown class="w-4 h-4" />{{ mySeat ? 'Switch here' : 'Take the seat' }}</button>
+                  <button v-if="!spectate && !s.rosterLocked" class="btn-primary !h-8 ml-auto" :disabled="pending" @click="command({ kind: 'claimSeat', team: t })"><Crown class="w-4 h-4" />{{ mySeat ? 'Switch here' : 'Take the seat' }}</button>
                 </div>
                 <div v-else class="flex flex-wrap items-center gap-2">
                   <span class="text-sm font-medium flex items-center gap-1.5"><span :class="['w-2 h-2 rounded-full', online(s.captains[t]) ? 'bg-accent' : 'bg-line']" :title="online(s.captains[t]) ? 'Online' : 'Offline'" />{{ nameOf(s.captains[t]) }}</span>
                   <span v-if="mySeat === t" class="text-xs text-draft">You're captain</span>
                   <template v-if="mySeat === t && !spectate">
                     <button :class="[s.ready[t] ? 'btn-ghost' : 'btn-primary', '!h-8 ml-auto']" :disabled="pending" @click="command({ kind: 'setReady', ready: !s.ready[t] })"><Check class="w-4 h-4" />{{ s.ready[t] ? 'Not ready' : "I'm ready" }}</button>
-                    <button class="btn-ghost !h-8" :disabled="pending" @click="command({ kind: 'leaveSeat' })"><LogOut class="w-4 h-4" />Leave seat</button>
+                    <button v-if="!s.rosterLocked" class="btn-ghost !h-8" :disabled="pending" @click="command({ kind: 'leaveSeat' })"><LogOut class="w-4 h-4" />Leave seat</button>
                   </template>
                 </div>
               </div>
@@ -374,8 +374,8 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               <div class="space-y-2">
                 <div class="flex items-center gap-2 text-sm"><Users class="w-4 h-4 text-muted" />Players <span class="text-muted text-xs">{{ s.members[t].length + (s.captains[t] ? 1 : 0) }}/{{ teamSize }}</span>
                   <template v-if="!spectate && !mySeat">
-                    <button v-if="myTeam !== t" class="btn-ghost !h-7 !px-2 ml-auto text-xs" :disabled="pending || s.members[t].length >= teamSize - 1" @click="command({ kind: 'joinTeam', team: t })"><UserPlus class="w-3.5 h-3.5" />Join</button>
-                    <button v-else class="btn-ghost !h-7 !px-2 ml-auto text-xs" :disabled="pending" @click="command({ kind: 'joinTeam', team: null })"><UserMinus class="w-3.5 h-3.5" />Leave team</button>
+                    <button v-if="!s.rosterLocked && myTeam !== t" class="btn-ghost !h-7 !px-2 ml-auto text-xs" :disabled="pending || s.members[t].length >= teamSize - 1" @click="command({ kind: 'joinTeam', team: t })"><UserPlus class="w-3.5 h-3.5" />Join</button>
+                    <button v-else-if="!s.rosterLocked" class="btn-ghost !h-7 !px-2 ml-auto text-xs" :disabled="pending" @click="command({ kind: 'joinTeam', team: null })"><UserMinus class="w-3.5 h-3.5" />Leave team</button>
                   </template>
                 </div>
                 <ul class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
@@ -391,7 +391,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
           <section class="card p-4 space-y-3">
             <div class="flex flex-wrap items-center gap-3">
               <h2 class="h-section">Draft order</h2>
-              <button v-if="(mySeat || isMod) && !spectate" class="btn-ghost !h-8 ml-auto" :disabled="pending" @click="command({ kind: 'swapSides' })"><ArrowLeftRight class="w-4 h-4" />Swap sides</button>
+              <button v-if="(mySeat || isMod) && !spectate && !s.rosterLocked" class="btn-ghost !h-8 ml-auto" :disabled="pending" @click="command({ kind: 'swapSides' })"><ArrowLeftRight class="w-4 h-4" />Swap sides</button>
             </div>
             <OrderTimeline :sequence="s.config.sequence" :team-names="rec.teamNames" />
             <div class="flex flex-wrap items-center gap-3 pt-1 text-sm">

@@ -1,6 +1,7 @@
 import type {
   Actor, DraftCommand, DraftConfig, DraftErrorCode, DraftState, DraftStep, MatchFormat, TeamSide,
 } from './types.js';
+export { applyFormationCommand } from './formation.js';
 
 export class DraftError extends Error {
   constructor(public code: DraftErrorCode, message?: string) { super(message ?? code); }
@@ -119,6 +120,7 @@ export interface ApplyContext { now: number; heroIds: number[]; random?: () => n
 export function applyCommand(prev: DraftState, cmd: DraftCommand, actor: Actor | null, ctx: ApplyContext): DraftState {
   const s = clone(prev);
   const { now } = ctx;
+  if (s.rosterLocked && ['claimSeat', 'leaveSeat', 'swapSides', 'joinTeam'].includes(cmd.kind)) throw new DraftError('FORBIDDEN', 'PUG teams are locked');
   const requireMod = () => { if (!actor?.isModerator) throw new DraftError('FORBIDDEN', 'Moderator only'); };
 
   switch (cmd.kind) {

@@ -1,0 +1,2 @@
+ALTER TABLE "PugSession" ADD COLUMN "formation" JSONB,
+ADD COLUMN "formationSeq" INTEGER NOT NULL DEFAULT 0;

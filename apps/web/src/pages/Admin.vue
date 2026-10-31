@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRouter } from 'vue-router';
 import UiSelect from '../components/UiSelect.vue';
 import { onMounted, reactive, ref } from 'vue';
 import { RefreshCw } from 'lucide-vue-next';
@@ -8,6 +9,8 @@ import { useSession } from '../stores/session';
 import PageState from '../components/PageState.vue';
 import PageHeader from '../components/PageHeader.vue';
 const session = useSession();
+const router = useRouter();
+async function createPug() { const p = await api<{ id: string }>('/pugs', { method: 'POST', body: pug }); await router.push(`/pugs/${p.id}`); }
 const tab = ref<'pug' | 'users' | 'seasons' | 'discord' | 'health' | 'audit'>('pug');
 const msg = ref<string | null>(null);
 const users = ref<any[]>([]); const seasons = ref<any[]>([]); const audit = ref<any[]>([]); const health = ref<any>(null); const notes = ref<any[]>([]);
@@ -34,7 +37,7 @@ const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'users', l
     </div>
     <p v-if="msg" class="card px-4 py-2 text-sm" role="status">{{ msg }}</p>
 
-    <form v-if="tab === 'pug'" class="card-ornate p-5 grid sm:grid-cols-4 gap-4 items-end" @submit.prevent="run(() => api('/pugs', { method: 'POST', body: pug }), 'PUG created.')">
+    <form v-if="tab === 'pug'" class="card-ornate p-5 grid sm:grid-cols-4 gap-4 items-end" @submit.prevent="run(createPug, 'PUG created.')">
       <div><span class="label">Format</span><UiSelect v-model="pug.format" :options="[{ value: '6v6', label: '6v6' }, { value: '4v4', label: '4v4' }, { value: '2v2', label: '2v2' }]" /></div>
       <div><label class="label" for="pa">Amber name</label><input id="pa" v-model="pug.amberName" class="input" /></div>
       <div><label class="label" for="ps">Sapphire name</label><input id="ps" v-model="pug.sapphireName" class="input" /></div>

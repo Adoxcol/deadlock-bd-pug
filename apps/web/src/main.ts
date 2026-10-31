@@ -9,6 +9,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: () => import('./pages/Dashboard.vue') },
+    { path: '/pugs/:pugId', component: () => import('./pages/PugRoom.vue'), props: true },
     { path: '/login', component: () => import('./pages/Login.vue') },
     { path: '/drafts', component: () => import('./pages/Drafts.vue') },
     { path: '/drafts/new', component: () => import('./pages/NewDraft.vue') },

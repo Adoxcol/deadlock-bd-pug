@@ -17,6 +17,22 @@ function setup() {
 
 describe('DraftService', () => {
   afterEach(() => vi.useRealTimers());
+  it('preserves locked PUG rosters when both captains rematch', async () => {
+    const { svc } = setup();
+    const d = await svc.create({ name: 'PUG', format: '2v2', bansPerTeam: 0, timerSeconds: 0, captains: { amber: 'a', sapphire: 's' }, members: { amber: ['a2'], sapphire: ['s2'] }, rosterLocked: true });
+    let current = await svc.execute(d.id, { kind: 'start' }, mod);
+    for (let heroId = 1; heroId <= 4; heroId++) {
+      const team = current.state.config.sequence[current.state.step]!.team;
+      current = await svc.execute(d.id, { kind: 'select', heroId, expectedSeq: current.state.seq }, { userId: current.state.captains[team]!, isModerator: false });
+    }
+    await svc.execute(d.id, { kind: 'voteRematch' }, capA);
+    const next = await svc.execute(d.id, { kind: 'voteRematch' }, { userId: 's', isModerator: false });
+    expect(next.id).not.toBe(d.id);
+    expect(next.state.rosterLocked).toBe(true);
+    expect(next.state.members).toEqual({ amber: ['a2'], sapphire: ['s2'] });
+    await expect(svc.execute(next.id, { kind: 'swapSides' }, capA)).rejects.toThrow(/locked/);
+    svc.shutdown();
+  });
   it('serializes concurrent actions: exactly one wins per turn', async () => {
     const { svc } = setup();
     const d = await svc.create({ name: 't', captains: { amber: 'a', sapphire: 's' } });
