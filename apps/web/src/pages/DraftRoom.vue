@@ -4,7 +4,10 @@ import { useRouter } from 'vue-router';
 import {
   Search, Play, Pause, Square, Lock, Ban, Timer, Eye, Link2, Tv, History, AlertTriangle, ExternalLink, Copy,
   Users, Check, LogOut, ArrowLeftRight, Crown, UserPlus, UserMinus, RotateCcw, Plus, SkipForward, Settings2, Circle,
+  Volume2, VolumeX,
 } from 'lucide-vue-next';
+import { sfx, volume } from '../lib/sfx';
+import RevealSplash from '../components/draft/RevealSplash.vue';
 import { api, ApiError } from '../lib/api';
 import { realtime } from '../lib/ws';
 import { useHeroes } from '../stores/heroes';
@@ -177,6 +180,38 @@ function onKey(e: KeyboardEvent) {
 watch(() => s.value?.seq, () => { if (selected.value !== null && unavailableReason(selected.value)) selected.value = null; });
 watch(myTurn, (v) => { if (!v) selected.value = null; });
 
+// ---------- Effects: reveal splash, sounds, confetti ----------
+const reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const splash = ref<{ key: number; heroId: number; type: 'pick' | 'ban'; team: Side } | null>(null);
+let splashTimer: number | undefined;
+const confetti = ref(0);
+const confettiBits = Array.from({ length: 70 }, (_, i) => ({
+  left: `${(i * 37) % 100}%`, delay: `${(i % 14) * 0.08}s`, size: 6 + (i % 4) * 2,
+  color: ['#f5a524', '#4f8ff7', '#7c5cff', '#22c55e', '#ffffff'][i % 5], round: i % 3 === 0,
+}));
+// Only react to new actions after the initial load, so reopening a finished draft stays quiet.
+watch(() => s.value?.history?.length ?? 0, (len, prev) => {
+  if (!prev || len <= prev) return;
+  const last = s.value.history.at(-1);
+  if (!last || last.reason === 'correction') return;
+  if (last.heroId === null) { sfx.tick(); return; }
+  last.type === 'ban' ? sfx.ban() : sfx.pick();
+  if (reducedMotion) return;
+  clearTimeout(splashTimer);
+  splash.value = { key: last.seq, heroId: last.heroId, type: last.type, team: last.team };
+  splashTimer = window.setTimeout(() => (splash.value = null), 1650);
+});
+watch(myTurn, (v) => { if (v) sfx.turn(); });
+watch(remaining, (r, prev) => { if (r !== null && prev !== null && r < prev && r <= 5 && r > 0 && s.value?.status === 'drafting') sfx.tick(r <= 3); });
+watch(() => s.value?.status, (st, prev) => {
+  if (st !== 'completed' || !prev || prev === 'completed') return;
+  setTimeout(() => sfx.complete(), 700);
+  if (!reducedMotion) { confetti.value++; setTimeout(() => (confetti.value = 0), 3800); }
+});
+const muted = computed(() => volume.value === 0);
+let lastVolume = volume.value || 0.6;
+function toggleSound() { if (muted.value) volume.value = lastVolume; else { lastVolume = volume.value; volume.value = 0; } }
+
 let unsub = () => {};
 let tick: number;
 function subscribe(id: string) {
@@ -196,13 +231,19 @@ onMounted(async () => {
   tick = window.setInterval(() => (now.value = realtime.now()), 250);
   window.addEventListener('keydown', onKey);
 });
-onUnmounted(() => { unsub(); clearInterval(tick); clearTimeout(hoverTimer); window.removeEventListener('keydown', onKey); });
+onUnmounted(() => { unsub(); clearInterval(tick); clearTimeout(hoverTimer); clearTimeout(splashTimer); window.removeEventListener('keydown', onKey); });
 const teamText = (t: Side) => (t === 'amber' ? 'text-amber-team' : 'text-sapphire-team');
 const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!border-t-sapphire-team');
 </script>
 
 <template>
   <div :class="broadcast ? 'min-h-screen bg-bg p-6' : ''">
+    <RevealSplash v-if="splash" :key="splash.key" :type="splash.type" :team="splash.team" :team-name="rec.teamNames[splash.team]"
+      :name="heroName(splash.heroId)" :src="heroes.byId(splash.heroId)?.imageUrl" />
+    <div v-if="confetti" :key="confetti" class="fixed inset-0 z-50 pointer-events-none overflow-hidden" aria-hidden="true">
+      <span v-for="(c, i) in confettiBits" :key="i" class="absolute -top-4 animate-confetti"
+        :style="{ left: c.left, animationDelay: c.delay, width: `${c.size}px`, height: `${c.round ? c.size : c.size * 1.8}px`, background: c.color, borderRadius: c.round ? '9999px' : '2px' }" />
+    </div>
     <PageState :loading="!rec && !error" :error="!rec ? error : null">
       <div v-if="s" class="space-y-4">
         <!-- Header -->
@@ -221,6 +262,10 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
           <div v-if="!broadcast" class="ml-auto flex flex-wrap items-center gap-2">
             <button v-if="rec.code" class="h-8 px-2.5 rounded-lg border border-line font-mono text-sm tracking-[0.2em] hover:bg-raised flex items-center gap-2" title="Copy room code" @click="copy(rec.code, 'Code')">{{ rec.code }}<Copy class="w-3.5 h-3.5 text-muted" /></button>
             <button class="btn-ghost !h-8" @click="copy(roomLink, 'Link')"><Link2 class="w-4 h-4" />Copy link</button>
+            <div class="flex items-center gap-1.5 h-8 px-2 rounded-lg border border-line">
+              <button class="text-muted hover:text-text" :title="muted ? 'Unmute draft sounds' : 'Mute draft sounds'" :aria-label="muted ? 'Unmute draft sounds' : 'Mute draft sounds'" @click="toggleSound"><component :is="muted ? VolumeX : Volume2" class="w-4 h-4" /></button>
+              <input v-model.number="volume" type="range" min="0" max="1" step="0.05" class="w-16 sm:w-20 accent-primary" aria-label="Draft sound volume" />
+            </div>
             <a :href="`/draft/${rec.id}/spectate?broadcast=1`" target="_blank" class="btn-ghost !h-8" title="Clean view for OBS"><Tv class="w-4 h-4" /><span class="hidden sm:inline">Broadcast</span></a>
             <RouterLink v-if="matchId" :to="`/matches/${matchId}/live`" class="btn-primary !h-8">Live match<ExternalLink class="w-3.5 h-3.5" /></RouterLink>
             <template v-if="isMod && !spectate">
@@ -303,7 +348,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
 
         <!-- ================= DRAFTING ================= -->
         <template v-else-if="s.status === 'drafting' || s.status === 'paused'">
-          <div class="grid gap-4 lg:grid-cols-[minmax(220px,260px)_1fr_minmax(220px,260px)]">
+          <div class="grid gap-4 lg:grid-cols-[minmax(240px,300px)_1fr_minmax(240px,300px)] 2xl:grid-cols-[360px_1fr_360px]">
             <!-- Team panels -->
             <aside v-for="team in SIDES" :key="team"
               :class="['card p-3 space-y-3 transition-shadow', team === 'amber' ? 'lg:order-1 border-amber-team/50' : 'lg:order-3 border-sapphire-team/50',
@@ -400,7 +445,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               <p v-if="heroes.source === 'builtin'" class="text-xs text-muted">Hero portraits load once the server can reach the Deadlock assets API.</p>
 
               <PageState :empty="!roster.length" empty-text="No heroes match your search.">
-                <div class="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-2 max-h-[56vh] lg:max-h-[62vh] overflow-y-auto pr-1">
+                <div class="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(96px,1fr))] 2xl:grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2 max-h-[56vh] lg:max-h-[calc(100vh-22rem)] lg:min-h-[320px] overflow-y-auto pr-1">
                   <button v-for="h in roster" :key="h.id" type="button" data-hero
                     :disabled="!myTurn || !!unavailableReason(h.id) || pending"
                     :title="unavailableReason(h.id) ? `${h.name} (${unavailableReason(h.id)})` : h.name"
