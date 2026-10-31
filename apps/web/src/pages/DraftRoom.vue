@@ -35,6 +35,9 @@ const actionError = ref<string | null>(null);
 const notice = ref<string | null>(null);
 const pending = ref(false);
 const selected = ref<number | null>(null);
+const hovered = ref<number | null>(null);
+/** Hero shown in the big preview: your selection, else whatever you're hovering. */
+const preview = computed(() => selected.value ?? hovered.value);
 const query = ref('');
 const heroType = ref<string>('all');
 const now = ref(realtime.now());
@@ -168,7 +171,7 @@ async function command(body: any) {
 }
 let hoverTimer: number | undefined;
 function choose(id: number) {
-  if (!myTurn.value || unavailableReason(id)) return;
+  if (!myTurn.value || pending.value || unavailableReason(id)) return;
   selected.value = id;
   // Tell the server what we're looking at (used if the timer runs out). Debounced; never blocks lock-in.
   clearTimeout(hoverTimer);
@@ -423,11 +426,12 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               </div>
               <div class="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-1 gap-2">
                 <div v-for="(p, i) in slots(team, 'pick')" :key="`p${i}-${p.heroId}`"
-                  :class="['relative overflow-hidden rounded-sm border aspect-[3/4] lg:aspect-auto lg:h-[calc((100vh-23rem)/6)] lg:min-h-[64px] bg-gradient-to-br',
+                  :class="['relative overflow-hidden rounded-sm border aspect-[3/4] lg:aspect-auto lg:h-[calc((100vh-20.5rem)/6)] lg:min-h-[64px] bg-gradient-to-br',
                     team === 'amber' ? 'from-amber-team/[0.08] to-surface/80' : 'from-sapphire-team/[0.08] to-surface/80',
                     p.active ? (team === 'amber' ? 'border-amber-team animate-glow' : 'border-sapphire-team animate-glow') : 'border-line']">
                   <template v-if="p.heroId !== null">
-                    <img :src="heroes.byId(p.heroId)?.imageUrl ?? undefined" alt="" :class="['absolute inset-0 w-full h-full object-cover object-[50%_20%]', lastStepKey === `${team}-pick-${i}` && 'animate-slot-in']" />
+                    <img :src="heroes.byId(p.heroId)?.imageUrl ?? undefined" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover blur-xl scale-125 opacity-40" />
+                    <img :src="heroes.byId(p.heroId)?.imageUrl ?? undefined" alt="" :class="['absolute inset-y-0 h-full w-auto max-w-[70%] object-cover object-top lg:aspect-[3/4]', team === 'amber' ? 'right-0' : 'left-0', lastStepKey === `${team}-pick-${i}` && 'animate-slot-in']" />
                     <div :class="['absolute inset-0', team === 'amber' ? 'bg-gradient-to-r from-black/80 via-black/20 to-transparent' : 'bg-gradient-to-l from-black/80 via-black/20 to-transparent']" />
                     <div :class="['absolute bottom-1.5 font-display text-sm uppercase leading-none text-text drop-shadow', team === 'amber' ? 'left-2' : 'right-2']">{{ heroName(p.heroId) }}</div>
                   </template>
@@ -469,8 +473,8 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               </div>
 
               <!-- Grid + preview -->
-              <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                <div class="card p-3 space-y-3 min-w-0">
+              <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:h-[max(380px,calc(100vh-28.5rem))]">
+                <div class="card p-3 min-w-0 flex flex-col gap-3 xl:min-h-0">
                   <div class="flex flex-wrap items-center gap-1.5">
                     <label class="relative flex-1 min-w-[150px]"><span class="sr-only">Search hero</span>
                       <Search class="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
@@ -482,17 +486,17 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                   </div>
                   <p v-if="!spectate && !myTurn && s.status === 'drafting'" class="text-xs text-muted">{{ mySeat ? 'Not your turn yet.' : 'You are watching. Only captains can ban and pick.' }}</p>
                   <PageState :empty="!roster.length" empty-text="No heroes match your search.">
-                    <div class="grid grid-cols-[repeat(auto-fill,minmax(54px,1fr))] gap-1.5 max-h-[50vh] xl:max-h-[calc(100vh-28rem)] overflow-y-auto p-1 -m-1">
+                    <div class="grid grid-cols-[repeat(auto-fill,minmax(54px,1fr))] gap-1.5 max-h-[50vh] xl:max-h-none xl:flex-1 xl:min-h-0 content-start overflow-y-auto p-1 -m-1">
                       <button v-for="h in roster" :key="h.id" type="button" data-hero
-                        :disabled="!myTurn || !!unavailableReason(h.id) || pending"
+                        :aria-disabled="!myTurn || !!unavailableReason(h.id) || pending"
                         :title="unavailableReason(h.id) ? `${h.name} (${unavailableReason(h.id)})` : h.name"
                         :class="['relative aspect-square overflow-hidden rounded-sm border bg-raised transition',
                           selected === h.id ? (step?.type === 'ban' ? 'border-danger ring-2 ring-danger z-10 scale-105' : 'border-primary ring-2 ring-primary z-10 scale-105') : 'border-line/70',
                           unavailableReason(h.id) ? 'opacity-30 grayscale' : myTurn ? 'hover:border-text/70 hover:brightness-110 cursor-pointer' : 'cursor-default']"
-                        @click="choose(h.id)">
+                        @click="choose(h.id)" @pointerenter="hovered = h.id" @pointerleave="hovered = null">
                         <img v-if="h.imageUrl" :src="h.imageUrl" alt="" class="absolute inset-0 w-full h-full object-cover object-top" loading="lazy" />
                         <span v-else class="absolute inset-0 grid place-items-center font-display text-xs text-muted">{{ h.name.slice(0, 2) }}</span>
-                        <span v-if="selected === h.id" class="absolute inset-x-0 bottom-0 bg-black/75 font-display text-[9px] uppercase text-center truncate px-0.5">{{ h.name }}</span>
+                        <span v-if="preview === h.id" class="absolute inset-x-0 bottom-0 bg-black/75 font-display text-[9px] uppercase text-center truncate px-0.5">{{ h.name }}</span>
                         <span v-if="unavailableReason(h.id) === 'banned'" class="absolute left-[-25%] w-[150%] top-1/2 h-0.5 bg-danger rotate-[-45deg]" />
                       </button>
                     </div>
@@ -500,29 +504,32 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                 </div>
 
                 <!-- Preview / action -->
-                <div class="relative card overflow-hidden min-h-[300px] xl:min-h-0 flex flex-col justify-end p-5">
-                  <template v-if="selected !== null">
-                    <img :key="selected" :src="heroes.byId(selected)?.imageUrl ?? undefined" alt="" class="absolute inset-0 w-full h-full object-cover object-[50%_15%] animate-fade-up" />
-                    <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/60 to-transparent" />
+                <div class="relative card overflow-hidden min-h-[320px] xl:min-h-0 flex flex-col justify-end p-5">
+                  <template v-if="preview !== null">
+                    <img :key="preview" :src="heroes.byId(preview)?.imageUrl ?? undefined" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-40" />
+                    <img :key="'p' + preview" :src="heroes.byId(preview)?.imageUrl ?? undefined" alt="" class="absolute right-0 top-0 h-full w-auto max-w-full object-cover object-top animate-fade-up [mask-image:linear-gradient(to_left,black_60%,transparent)]" />
+                    <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/50 to-transparent" />
                   </template>
                   <div v-else :class="['absolute inset-0', step?.type === 'ban' ? 'bg-[radial-gradient(ellipse_at_50%_35%,rgba(207,74,60,.22),transparent_65%)]' : 'bg-[radial-gradient(ellipse_at_50%_35%,rgba(212,162,76,.25),transparent_65%)]']" />
-                  <div class="relative space-y-3">
-                    <template v-if="selected !== null">
-                      <div :class="['font-mono text-[11px] font-bold uppercase tracking-[0.25em]', step?.type === 'ban' ? 'text-danger' : 'text-primary']">{{ step?.type === 'ban' ? 'Ban' : 'Lock in' }}</div>
-                      <div class="font-display text-5xl sm:text-6xl uppercase leading-[0.9] italic -skew-x-6 text-text drop-shadow-[0_4px_20px_rgba(0,0,0,.8)]">{{ heroName(selected) }}</div>
-                      <span v-if="heroes.byId(selected)?.heroType" class="inline-block font-display text-xs uppercase bg-text text-bg px-2 py-0.5">{{ heroes.byId(selected)?.heroType }}</span>
-                    </template>
-                    <template v-else>
-                      <div :class="['font-display text-4xl sm:text-5xl uppercase leading-none', myTurn ? 'text-primary' : step ? teamText(step.team) : 'text-muted']">{{ myTurn ? 'Your turn' : s.status === 'paused' ? 'Paused' : `${step ? rec.teamNames[step.team] : ''}` }}</div>
-                      <p class="text-sm text-muted">{{ myTurn ? `Click a hero to ${step?.type}, or type a name${step?.type === 'ban' ? ', or skip the ban' : ''}.` : step ? `${step.type === 'ban' ? 'Banning' : 'Picking'} a hero…` : '' }}</p>
-                    </template>
-                    <div v-if="myTurn" class="flex flex-wrap gap-2 pt-1">
-                      <button :class="[step?.type === 'ban' ? 'btn-danger-solid' : 'btn-primary', '!h-12 !px-6 !text-lg flex-1 min-w-[200px] whitespace-nowrap']" :disabled="selected === null || pending" @click="lockIn">
-                        <component :is="step?.type === 'ban' ? Ban : Lock" class="w-5 h-5" />{{ step?.type === 'ban' ? 'Ban' : 'Lock in' }} {{ selected !== null ? heroName(selected) : '' }}
-                        <kbd class="text-[10px] opacity-70 border border-current rounded px-1">Enter</kbd>
-                      </button>
-                      <button v-if="step?.type === 'ban'" class="btn-ghost !h-12 !px-5 !text-base" :disabled="pending" @click="command({ kind: 'skip', expectedSeq: s.seq })"><SkipForward class="w-4 h-4" />Skip ban</button>
+                  <div class="relative flex flex-wrap items-end justify-between gap-4">
+                    <div class="min-w-0 space-y-2">
+                      <template v-if="preview !== null">
+                        <div class="text-sm text-muted">{{ selected !== null ? (step?.type === 'ban' ? 'Your ban' : 'Your pick') : unavailableReason(preview) ? `Unavailable · ${unavailableReason(preview)}` : myTurn ? 'Click to select' : 'Previewing' }}</div>
+                        <div class="font-display text-5xl sm:text-6xl uppercase leading-[0.9] italic -skew-x-6 text-text drop-shadow-[0_4px_20px_rgba(0,0,0,.8)] truncate">{{ heroName(preview) }}</div>
+                        <span v-if="heroes.byId(preview)?.heroType" class="inline-block font-display text-xs uppercase bg-text text-bg px-2 py-0.5">{{ heroes.byId(preview)?.heroType }}</span>
+                      </template>
+                      <template v-else>
+                        <div :class="['font-display text-4xl sm:text-5xl uppercase leading-none', myTurn ? 'text-primary' : step ? teamText(step.team) : 'text-muted']">{{ myTurn ? 'Your turn' : s.status === 'paused' ? 'Paused' : `${step ? rec.teamNames[step.team] : ''}` }}</div>
+                        <p class="text-sm text-muted">{{ myTurn ? `Click a hero to ${step?.type}, or type a name${step?.type === 'ban' ? ', or skip the ban' : ''}.` : step ? `${step.type === 'ban' ? 'Banning' : 'Picking'} a hero…` : '' }}</p>
+                      </template>
+                      <button v-if="myTurn && step?.type === 'ban'" class="btn-ghost !h-9" :disabled="pending" @click="command({ kind: 'skip', expectedSeq: s.seq })"><SkipForward class="w-4 h-4" />Skip this ban</button>
                     </div>
+                    <button v-if="myTurn" :disabled="selected === null || pending" @click="lockIn"
+                      :class="['shrink-0 flex flex-col items-center justify-center px-9 py-3 -rotate-2 [clip-path:polygon(3%_0,100%_4%,97%_100%,0_94%)] transition disabled:opacity-40 disabled:cursor-not-allowed enabled:hover:scale-105 enabled:hover:rotate-0',
+                        step?.type === 'ban' ? 'bg-danger text-white' : 'bg-primary text-bg', selected !== null && 'shadow-[0_0_40px_-6px_currentColor]']">
+                      <span class="font-display text-3xl sm:text-4xl uppercase leading-none">{{ step?.type === 'ban' ? 'Ban' : 'Lock in' }}</span>
+                      <span class="mt-1 flex items-center gap-1.5 text-xs font-semibold">{{ selected !== null ? heroName(selected) : 'Select a hero' }}<kbd class="text-[10px] opacity-70 border border-current rounded px-1">Enter</kbd></span>
+                    </button>
                   </div>
                 </div>
               </div>
