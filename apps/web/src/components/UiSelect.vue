@@ -3,6 +3,7 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { Check } from 'lucide-vue-next';
 
+defineOptions({ inheritAttrs: false }); // two roots (button + teleported panel): class/aria go on the button
 const props = defineProps<{ modelValue: T; options: Array<{ value: T; label: string }>; id?: string; disabled?: boolean; size?: 'sm' }>();
 const emit = defineEmits<{ 'update:modelValue': [T] }>();
 
@@ -50,7 +51,7 @@ onBeforeUnmount(close);
 </script>
 
 <template>
-  <button :id="id" ref="btn" type="button" role="combobox" aria-haspopup="listbox" :aria-expanded="open" :disabled="disabled"
+  <button v-bind="$attrs" :id="id" ref="btn" type="button" role="combobox" aria-haspopup="listbox" :aria-expanded="open" :disabled="disabled"
     :class="['input flex items-center gap-2 text-left disabled:opacity-50 disabled:cursor-not-allowed', size === 'sm' && '!h-8 text-xs', open && '!border-primary/70']"
     @click="open ? close() : show()" @keydown="onKey">
     <span class="flex-1 truncate">{{ current?.label ?? '—' }}</span>

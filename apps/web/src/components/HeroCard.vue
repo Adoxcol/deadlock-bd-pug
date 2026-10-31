@@ -37,6 +37,6 @@ const ring = computed(() => ({
       <div v-if="state === 'taken'" class="absolute inset-0 bg-black/65" />
       <span v-if="label" class="absolute top-1 left-1 right-1 text-center text-[9px] font-semibold uppercase tracking-wide rounded bg-black/70 text-white/90 px-1 py-0.5 truncate">{{ label }}</span>
     </template>
-    <span v-else-if="label" class="absolute inset-0 grid place-items-center text-[10px] font-semibold text-muted">{{ label }}</span>
+    <span v-else-if="label" class="absolute inset-0 grid place-items-center font-display text-lg text-muted/60">{{ label }}</span>
   </div>
 </template>
