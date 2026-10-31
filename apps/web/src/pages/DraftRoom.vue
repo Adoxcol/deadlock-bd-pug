@@ -187,7 +187,7 @@ let splashTimer: number | undefined;
 const confetti = ref(0);
 const confettiBits = Array.from({ length: 70 }, (_, i) => ({
   left: `${(i * 37) % 100}%`, delay: `${(i % 14) * 0.08}s`, size: 6 + (i % 4) * 2,
-  color: ['#f5a524', '#4f8ff7', '#7c5cff', '#22c55e', '#ffffff'][i % 5], round: i % 3 === 0,
+  color: ['#e8a33a', '#5a8fe0', '#d4a24c', '#ece2cc', '#cf4a3c'][i % 5], round: i % 3 === 0,
 }));
 // Only react to new actions after the initial load, so reopening a finished draft stays quiet.
 watch(() => s.value?.history?.length ?? 0, (len, prev) => {
@@ -250,7 +250,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
         <div class="flex flex-wrap items-center gap-3">
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
-              <h1 class="text-xl font-semibold tracking-tight truncate">{{ rec.name }}</h1>
+              <h1 class="text-2xl sm:text-3xl font-extrabold tracking-wider truncate">{{ rec.name }}</h1>
               <StatusBadge :status="s.status" />
               <SimBadge v-if="rec.simulated" />
             </div>
@@ -288,7 +288,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
           </p>
           <div class="grid md:grid-cols-2 gap-4">
             <section v-for="t in SIDES" :key="t" :class="['card p-4 space-y-4 border-t-2', teamBorder(t)]">
-              <h2 :class="['text-lg font-semibold', teamText(t)]">{{ rec.teamNames[t] }}</h2>
+              <h2 :class="['font-serif normal-case tracking-normal text-2xl', teamText(t)]">{{ rec.teamNames[t] }}</h2>
               <!-- Captain seat -->
               <div class="rounded-lg border border-line bg-bg/40 p-3 space-y-3">
                 <div class="flex items-center gap-2">
@@ -351,12 +351,12 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
           <div class="grid gap-4 lg:grid-cols-[minmax(240px,300px)_1fr_minmax(240px,300px)] 2xl:grid-cols-[360px_1fr_360px]">
             <!-- Team panels -->
             <aside v-for="team in SIDES" :key="team"
-              :class="['card p-3 space-y-3 transition-shadow', team === 'amber' ? 'lg:order-1 border-amber-team/50' : 'lg:order-3 border-sapphire-team/50',
-                step?.team === team && s.status === 'drafting' ? (team === 'amber' ? 'shadow-[0_0_0_1px_#f5a524,0_0_24px_-6px_#f5a524]' : 'shadow-[0_0_0_1px_#4f8ff7,0_0_24px_-6px_#4f8ff7]') : '']">
+              :class="['card p-3 space-y-3 transition-shadow', team === 'amber' ? 'lg:order-1 border-amber-team/50 bg-gradient-to-b from-amber-team/[0.12] via-surface/90 to-surface/90' : 'lg:order-3 border-sapphire-team/50 bg-gradient-to-b from-sapphire-team/[0.12] via-surface/90 to-surface/90',
+                step?.team === team && s.status === 'drafting' ? (team === 'amber' ? 'shadow-[0_0_0_1px_#e8a33a,0_0_28px_-6px_#e8a33a]' : 'shadow-[0_0_0_1px_#5a8fe0,0_0_28px_-6px_#5a8fe0]') : '']">
               <div class="flex items-center gap-2.5">
                 <div :class="['w-9 h-9 rounded-lg grid place-items-center border', team === 'amber' ? 'border-amber-team/50 bg-amber-team/10 text-amber-team' : 'border-sapphire-team/50 bg-sapphire-team/10 text-sapphire-team']"><Crown class="w-4 h-4" /></div>
                 <div class="min-w-0">
-                  <h2 :class="['font-bold truncate', teamText(team)]">{{ rec.teamNames[team] }}</h2>
+                  <h2 :class="['font-serif normal-case tracking-normal text-xl leading-tight truncate', teamText(team)]">{{ rec.teamNames[team] }}</h2>
                   <p class="text-[11px] text-muted truncate">Captain: {{ nameOf(s.captains[team]) ?? 'Unassigned' }}</p>
                 </div>
                 <span class="ml-auto text-xs text-muted tabular-nums">{{ s.picks[team].length }}/{{ teamSize }}</span>
@@ -390,13 +390,13 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
             </aside>
 
             <!-- Center -->
-            <section class="order-first lg:order-2 card p-3 sm:p-4 space-y-4 min-w-0">
+            <section class="order-first lg:order-2 card-ornate p-3 sm:p-4 space-y-4 min-w-0">
               <div class="flex flex-wrap items-stretch gap-3">
                 <div :key="s.step" :class="['flex-1 min-w-[200px] flex items-center gap-3 rounded-xl border px-4 py-3 animate-fade-up',
                   step?.type === 'ban' ? 'border-danger/40 bg-danger/[0.07]' : 'border-primary/40 bg-primary/[0.08]']">
                   <component :is="step?.type === 'ban' ? Ban : Lock" :class="['w-6 h-6 shrink-0', step?.type === 'ban' ? 'text-danger' : 'text-primary']" />
                   <div class="min-w-0">
-                    <div :class="['text-base font-bold', step?.type === 'ban' ? 'text-danger' : 'text-primary']">{{ step?.type === 'ban' ? 'Ban Phase' : 'Pick Phase' }}</div>
+                    <div :class="['font-display text-2xl font-extrabold uppercase tracking-wider leading-none mb-1', step?.type === 'ban' ? 'text-danger' : 'text-primary']">{{ step?.type === 'ban' ? 'Ban Phase' : 'Pick Phase' }}</div>
                     <div class="text-sm">
                       <template v-if="s.status === 'paused'"><span class="text-warn">Paused by a moderator</span></template>
                       <template v-else-if="myTurn">Your turn to {{ step!.type }}</template>
@@ -411,7 +411,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                     <rect x="3" y="3" width="94" height="94" rx="12" fill="none" stroke="currentColor" stroke-width="3" pathLength="100" :stroke-dasharray="`${timerPct} 100`" :class="['transition-[stroke-dasharray] duration-300 ease-linear', remaining <= 10 ? 'text-danger' : 'text-primary']" />
                   </svg>
                   <div v-if="s.status === 'paused'" class="text-lg font-bold text-warn flex items-center gap-1"><Pause class="w-4 h-4" />Paused</div>
-                  <div v-else-if="remaining !== null" :key="remaining <= 10 ? remaining : 'x'" :class="['text-3xl font-extrabold tabular-nums', remaining <= 10 ? 'text-danger animate-tick' : '']">{{ clock(remaining) }}</div>
+                  <div v-else-if="remaining !== null" :key="remaining <= 10 ? remaining : 'x'" :class="['font-display text-5xl font-extrabold tabular-nums', remaining <= 10 ? 'text-danger animate-tick' : '']">{{ clock(remaining) }}</div>
                   <div v-else class="text-xs text-muted flex flex-col items-center gap-1"><Timer class="w-5 h-5" />No timer</div>
                 </div>
               </div>
@@ -438,7 +438,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                   <kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted border border-line rounded px-1">/</kbd>
                 </label>
                 <div v-if="heroTypes.length" class="flex rounded-lg border border-line overflow-hidden text-sm">
-                  <button v-for="f in ['all', ...heroTypes]" :key="f" :class="['px-3 h-9 capitalize', heroType === f ? 'bg-primary text-white' : 'text-muted hover:text-text']" @click="heroType = f">{{ f }}</button>
+                  <button v-for="f in ['all', ...heroTypes]" :key="f" :class="['px-3 h-9 capitalize', heroType === f ? 'bg-primary text-bg' : 'text-muted hover:text-text']" @click="heroType = f">{{ f }}</button>
                 </div>
                 <span class="self-center text-xs text-muted tabular-nums">{{ freeCount }} free</span>
               </div>
@@ -486,7 +486,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               </ol>
             </section>
             <section class="card p-4">
-              <h2 class="text-xs font-semibold text-muted mb-2">Current Turn</h2>
+              <h2 class="font-display text-xs font-semibold uppercase tracking-widest text-muted mb-2">Current Turn</h2>
               <div v-if="step" :key="s.step" class="flex items-center gap-3 animate-fade-up">
                 <div :class="['w-10 h-10 rounded-full grid place-items-center border-2', step.team === 'amber' ? 'border-amber-team text-amber-team' : 'border-sapphire-team text-sapphire-team']"><component :is="step.type === 'ban' ? Ban : Lock" class="w-4 h-4" /></div>
                 <div class="min-w-0"><div :class="['font-bold truncate', teamText(step.team)]">{{ rec.teamNames[step.team] }}</div><div class="text-sm text-muted">{{ step.type === 'ban' ? 'Ban' : 'Pick' }} a hero</div></div>
@@ -513,7 +513,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
           <div class="grid md:grid-cols-2 gap-4">
             <section v-for="t in SIDES" :key="t" :class="['card p-4 space-y-3 border-t-2', teamBorder(t)]">
               <div class="flex items-center justify-between gap-2">
-                <h2 :class="['text-lg font-semibold', teamText(t)]">{{ rec.teamNames[t] }}</h2>
+                <h2 :class="['font-serif normal-case tracking-normal text-2xl', teamText(t)]">{{ rec.teamNames[t] }}</h2>
                 <div class="flex items-center gap-1.5 text-xs text-muted">Bans
                   <template v-for="(b, i) in slots(t, 'ban')" :key="i">
                     <HeroCard v-if="b.heroId !== null" size="xs" :name="heroName(b.heroId)" :src="heroes.byId(b.heroId)?.imageUrl" state="banned" :title="heroName(b.heroId)" />

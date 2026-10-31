@@ -3,18 +3,23 @@ export default {
   content: ['./index.html', './src/**/*.{vue,ts}'],
   theme: {
     extend: {
-      fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
-      colors: {
-        bg: '#070b14', surface: '#0c1220', raised: '#121a2c', line: '#1d2740', muted: '#8590a8', text: '#e8ecf5',
-        primary: '#7c5cff', accent: '#2dd4bf', warn: '#f59e0b', danger: '#ef4444', draft: '#a78bfa',
-        amber: { team: '#f5a524' }, sapphire: { team: '#4f8ff7' },
+      // Deadlock-inspired: smoky charcoal, worn brass, aged-paper text, condensed display caps, engraved serif accents.
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['"Barlow Condensed"', 'Inter', 'sans-serif'],
+        serif: ['"IM Fell English SC"', 'Georgia', 'serif'],
       },
-      borderRadius: { DEFAULT: '8px', lg: '10px', xl: '12px' },
+      colors: {
+        bg: '#0c0a08', surface: '#15120e', raised: '#1e1a15', line: '#2f2920', muted: '#9c907c', text: '#ece2cc',
+        primary: '#d4a24c', accent: '#74b49b', warn: '#e3a33b', danger: '#cf4a3c', draft: '#e2b965',
+        amber: { team: '#e8a33a' }, sapphire: { team: '#5a8fe0' },
+      },
+      borderRadius: { DEFAULT: '4px', lg: '5px', xl: '6px' },
       keyframes: {
         'slot-in': { '0%': { transform: 'scale(1.25)', opacity: '0', filter: 'brightness(2)' }, '60%': { transform: 'scale(0.96)', opacity: '1' }, '100%': { transform: 'scale(1)', filter: 'brightness(1)' } },
         'ban-slash': { '0%': { transform: 'scaleX(0) rotate(-45deg)' }, '100%': { transform: 'scaleX(1) rotate(-45deg)' } },
-        'glow': { '0%,100%': { boxShadow: '0 0 0 0 rgba(124,92,255,0)' }, '50%': { boxShadow: '0 0 0 4px rgba(124,92,255,.35)' } },
-        'glow-danger': { '0%,100%': { boxShadow: '0 0 0 0 rgba(239,68,68,0)' }, '50%': { boxShadow: '0 0 0 4px rgba(239,68,68,.35)' } },
+        'glow': { '0%,100%': { boxShadow: '0 0 0 0 rgba(212,162,76,0)' }, '50%': { boxShadow: '0 0 0 4px rgba(212,162,76,.35), 0 0 22px -4px rgba(212,162,76,.6)' } },
+        'glow-danger': { '0%,100%': { boxShadow: '0 0 0 0 rgba(207,74,60,0)' }, '50%': { boxShadow: '0 0 0 4px rgba(207,74,60,.35), 0 0 22px -4px rgba(207,74,60,.6)' } },
         'fade-up': { '0%': { transform: 'translateY(6px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } },
         'tick': { '0%': { transform: 'scale(1.12)' }, '100%': { transform: 'scale(1)' } },
         // Pick/ban reveal: wash and band sweep in, card punches in, name rises, everything fades by ~1.6s.

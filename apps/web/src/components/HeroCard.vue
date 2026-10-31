@@ -29,7 +29,7 @@ const ring = computed(() => ({
         <span :class="['absolute inset-0 grid place-items-center font-black tracking-tight text-white/85', text]">{{ initials }}</span>
       </div>
       <div v-if="size === 'md' || size === 'lg'" class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-6 pb-1.5 px-1.5">
-        <span class="block text-[11px] sm:text-xs font-bold uppercase tracking-wide text-white truncate text-center">{{ name }}</span>
+        <span class="block font-display text-xs sm:text-sm font-bold uppercase tracking-wider text-text truncate text-center">{{ name }}</span>
       </div>
       <div v-if="state === 'banned'" class="absolute inset-0 bg-black/55 grayscale">
         <div class="absolute left-[-10%] right-[-10%] top-1/2 h-[3px] bg-danger origin-center animate-ban-slash" />
