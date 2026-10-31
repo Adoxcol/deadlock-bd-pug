@@ -17,7 +17,7 @@ defineProps<{ name: string; src?: string | null; type: 'pick' | 'ban'; team: 'am
         </div>
       </div>
       <div class="min-w-0">
-        <div :class="['font-serif text-lg sm:text-2xl normal-case tracking-normal animate-splash-label', type === 'ban' ? 'text-danger' : team === 'amber' ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName }} {{ type === 'ban' ? 'bans' : 'picks' }}</div>
+        <div :class="['font-mono text-sm sm:text-base font-bold uppercase tracking-[0.2em] animate-splash-label', type === 'ban' ? 'text-danger' : team === 'amber' ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName }} {{ type === 'ban' ? 'bans' : 'picks' }}</div>
         <div class="font-display text-5xl sm:text-7xl font-extrabold uppercase tracking-wide text-text drop-shadow-[0_4px_24px_rgba(0,0,0,.7)] animate-splash-name">{{ name }}</div>
       </div>
     </div>

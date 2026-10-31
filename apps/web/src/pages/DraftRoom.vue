@@ -288,7 +288,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
           </p>
           <div class="grid md:grid-cols-2 gap-4">
             <section v-for="t in SIDES" :key="t" :class="['card p-4 space-y-4 border-t-2', teamBorder(t)]">
-              <h2 :class="['font-serif normal-case tracking-normal text-2xl', teamText(t)]">{{ rec.teamNames[t] }}</h2>
+              <h2 :class="['font-display text-2xl', teamText(t)]">{{ rec.teamNames[t] }}</h2>
               <!-- Captain seat -->
               <div class="rounded-lg border border-line bg-bg/40 p-3 space-y-3">
                 <div class="flex items-center gap-2">
@@ -356,7 +356,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               <div class="flex items-center gap-2.5">
                 <div :class="['w-9 h-9 rounded-lg grid place-items-center border', team === 'amber' ? 'border-amber-team/50 bg-amber-team/10 text-amber-team' : 'border-sapphire-team/50 bg-sapphire-team/10 text-sapphire-team']"><Crown class="w-4 h-4" /></div>
                 <div class="min-w-0">
-                  <h2 :class="['font-serif normal-case tracking-normal text-xl leading-tight truncate', teamText(team)]">{{ rec.teamNames[team] }}</h2>
+                  <h2 :class="['font-display text-xl leading-tight truncate', teamText(team)]">{{ rec.teamNames[team] }}</h2>
                   <p class="text-[11px] text-muted truncate">Captain: {{ nameOf(s.captains[team]) ?? 'Unassigned' }}</p>
                 </div>
                 <span class="ml-auto text-xs text-muted tabular-nums">{{ s.picks[team].length }}/{{ teamSize }}</span>
@@ -513,7 +513,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
           <div class="grid md:grid-cols-2 gap-4">
             <section v-for="t in SIDES" :key="t" :class="['card p-4 space-y-3 border-t-2', teamBorder(t)]">
               <div class="flex items-center justify-between gap-2">
-                <h2 :class="['font-serif normal-case tracking-normal text-2xl', teamText(t)]">{{ rec.teamNames[t] }}</h2>
+                <h2 :class="['font-display text-2xl', teamText(t)]">{{ rec.teamNames[t] }}</h2>
                 <div class="flex items-center gap-1.5 text-xs text-muted">Bans
                   <template v-for="(b, i) in slots(t, 'ban')" :key="i">
                     <HeroCard v-if="b.heroId !== null" size="xs" :name="heroName(b.heroId)" :src="heroes.byId(b.heroId)?.imageUrl" state="banned" :title="heroName(b.heroId)" />

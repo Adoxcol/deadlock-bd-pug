@@ -3,11 +3,11 @@ export default {
   content: ['./index.html', './src/**/*.{vue,ts}'],
   theme: {
     extend: {
-      // Deadlock-inspired: smoky charcoal, worn brass, aged-paper text, condensed display caps, engraved serif accents.
+      // Deadlock-inspired: smoky charcoal, worn brass, aged-paper text, heavy all-caps display, mono micro-labels.
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        display: ['"Barlow Condensed"', 'Inter', 'sans-serif'],
-        serif: ['"IM Fell English SC"', 'Georgia', 'serif'],
+        sans: ['Geist', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['"Archivo Black"', 'Geist', 'sans-serif'],
+        mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
       },
       colors: {
         bg: '#0c0a08', surface: '#15120e', raised: '#1e1a15', line: '#2f2920', muted: '#9c907c', text: '#ece2cc',
