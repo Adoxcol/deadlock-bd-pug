@@ -27,12 +27,7 @@ const self = computed(() => session.user?.id === props.playerId);
 const current = computed(() => p.value?.seasons?.find((r: any) => r.season.isActive));
 const name = computed(() => p.value?.user.displayName ?? '');
 const initial = computed(() => name.value.replace('[SIM] ', '').charAt(0).toUpperCase());
-/** Heroes by matches played, with wins, from the recent match history. */
-const favorites = computed(() => {
-  const c = new Map<number, { n: number; w: number }>();
-  for (const h of p.value?.history ?? []) if (h.heroId != null) { const x = c.get(h.heroId) ?? { n: 0, w: 0 }; x.n++; if (h.won) x.w++; c.set(h.heroId, x); }
-  return [...c].sort((a, b) => b[1].n - a[1].n).slice(0, 8);
-});
+const kda = (h: any) => ((h.kills + h.assists) / Math.max(1, h.deaths)).toFixed(1);
 const recentForm = computed(() => (p.value?.history ?? []).slice(0, 10).map((h: any) => h.won as boolean));
 const spark = computed(() => {
   const xs = (p.value?.pointsHistory ?? []) as number[]; if (xs.length < 2) return null;
@@ -71,8 +66,9 @@ const steamNotice = computed(() => {
             <span v-for="(w, i) in recentForm" :key="i" :class="['w-5 h-5 grid place-items-center font-mono text-[10px] font-bold', w ? 'bg-accent/20 text-accent' : 'bg-danger/20 text-danger']">{{ w ? 'W' : 'L' }}</span>
           </div>
         </div>
-        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:ml-auto w-full sm:w-auto">
+        <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 sm:ml-auto w-full sm:w-auto">
           <StatTile :label="p.skill.rating == null ? `Unrated · ${Math.min(p.skill.matches, p.skill.calibration)}/${p.skill.calibration}` : 'Rating'" :value="p.skill.rating ?? '—'" />
+          <StatTile :label="p.rank ? `Rank of ${p.rank.of}` : 'Rank'" :value="p.rank ? `#${p.rank.position}` : '—'" />
           <StatTile label="Points" :value="current?.points?.toLocaleString()" />
           <StatTile label="Wins" :value="current?.wins" tone="win" />
           <StatTile label="Losses" :value="current?.losses" tone="loss" />
@@ -116,12 +112,26 @@ const steamNotice = computed(() => {
       <!-- Heroes -->
       <section v-if="tab === 'overview' || tab === 'heroes'" class="card-ornate p-4">
         <h2 class="h-section mb-3">Most played heroes</h2>
-        <PageState :empty="!favorites.length" empty-text="No hero data yet.">
-          <div class="grid grid-cols-4 sm:grid-cols-8 gap-2">
-            <div v-for="[id, f] in favorites" :key="id" class="space-y-1">
-              <HeroCard :name="heroOf(id)?.name ?? `#${id}`" :src="heroOf(id)?.imageUrl" />
-              <div class="text-center font-mono text-[10px] uppercase tracking-wider text-muted">{{ f.n }} played · {{ pct(f.w / f.n) }}</div>
+        <PageState :empty="!p.heroes.length" empty-text="No hero data yet.">
+          <div v-if="tab === 'overview'" class="grid grid-cols-4 sm:grid-cols-8 gap-2">
+            <div v-for="h in p.heroes.slice(0, 8)" :key="h.heroId" class="space-y-1">
+              <HeroCard :name="heroOf(h.heroId)?.name ?? `#${h.heroId}`" :src="heroOf(h.heroId)?.imageUrl" />
+              <div class="text-center font-mono text-[10px] uppercase tracking-wider text-muted">{{ h.matches }} played · {{ pct(h.wins / h.matches) }}</div>
             </div>
+          </div>
+          <div v-else class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead><tr class="font-mono text-[10px] uppercase tracking-wider text-muted text-right"><th class="text-left font-bold py-2">Hero</th><th class="font-bold px-2">Played</th><th class="font-bold px-2">Win rate</th><th class="font-bold px-2">Avg K / D / A</th><th class="font-bold pl-2">KDA</th></tr></thead>
+              <tbody class="divide-y divide-line/60">
+                <tr v-for="h in p.heroes" :key="h.heroId" class="text-right tabular-nums">
+                  <td class="py-2 text-left"><span class="flex items-center gap-3"><HeroCard size="xs" :name="heroOf(h.heroId)?.name ?? '?'" :src="heroOf(h.heroId)?.imageUrl" /><span class="truncate">{{ heroOf(h.heroId)?.name ?? `#${h.heroId}` }}</span></span></td>
+                  <td class="px-2">{{ h.matches }}</td>
+                  <td class="px-2">{{ pct(h.wins / h.matches) }}</td>
+                  <td class="px-2 font-mono whitespace-nowrap">{{ (h.kills / h.matches).toFixed(1) }} / {{ (h.deaths / h.matches).toFixed(1) }} / {{ (h.assists / h.matches).toFixed(1) }}</td>
+                  <td class="pl-2 font-mono">{{ kda(h) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </PageState>
       </section>

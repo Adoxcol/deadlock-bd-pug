@@ -21,6 +21,7 @@ import PageState from '../components/PageState.vue';
 import SimBadge from '../components/SimBadge.vue';
 import OrderTimeline from '../components/draft/OrderTimeline.vue';
 import LobbyPanel from '../components/draft/LobbyPanel.vue';
+import ScoutPanel from '../components/draft/ScoutPanel.vue';
 
 type Side = 'amber' | 'sapphire';
 const SIDES: Side[] = ['amber', 'sapphire'];
@@ -404,6 +405,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               <span class="text-xs text-muted">{{ s.config.timeoutBehavior === 'random' ? 'The hero being looked at gets banned, otherwise a random one.' : s.config.timeoutBehavior === 'pause' ? 'The draft pauses for a moderator.' : 'The ban is lost.' }} Picks always lock the hero being looked at, or a random one.</span>
             </div>
           </section>
+          <ScoutPanel v-if="!broadcast" :draft-id="rec.id" :teams="{ amber: teamPeople('amber'), sapphire: teamPeople('sapphire') }" :team-names="rec.teamNames" :name-of="nameOf" />
         </template>
 
         <!-- ================= DRAFTING ================= -->
@@ -588,6 +590,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               </ol>
             </section>
           </div>
+          <ScoutPanel v-if="!broadcast" :draft-id="rec.id" :teams="{ amber: teamPeople('amber'), sapphire: teamPeople('sapphire') }" :team-names="rec.teamNames" :name-of="nameOf" />
         </template>
 
         <!-- ================= RESULT ================= -->

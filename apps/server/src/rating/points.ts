@@ -31,6 +31,21 @@ export function underdogBonus(team: 'AMBER' | 'SAPPHIRE', won: boolean, amberRat
   return won ? full : Math.round(full / 2);
 }
 
+export interface HeroSummary { heroId: number; matches: number; wins: number; kills: number; deaths: number; assists: number }
+
+/** Per-hero totals, most played first, then most wins. Rows with no hero are skipped. */
+export function heroSummary(rows: Array<{ heroId: number | null; won: boolean; kills: number | null; deaths: number | null; assists: number | null }>): HeroSummary[] {
+  const by = new Map<number, HeroSummary>();
+  for (const r of rows) {
+    if (r.heroId === null) continue;
+    const h = by.get(r.heroId) ?? { heroId: r.heroId, matches: 0, wins: 0, kills: 0, deaths: 0, assists: 0 };
+    h.matches++; if (r.won) h.wins++;
+    h.kills += r.kills ?? 0; h.deaths += r.deaths ?? 0; h.assists += r.assists ?? 0;
+    by.set(r.heroId, h);
+  }
+  return [...by.values()].sort((a, b) => b.matches - a.matches || b.wins - a.wins);
+}
+
 export interface Standing { userId: string; points: number; matches: number; wins: number; losses: number }
 
 /** Ranked by points, then win count. Rows without a user (guests) earn nothing. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchPoints, skillRating, standings, underdogBonus } from '../src/rating/points.js';
+import { heroSummary, matchPoints, skillRating, standings, underdogBonus } from '../src/rating/points.js';
 
 describe('PUG points', () => {
   it('matches the published scores', () => {
@@ -33,5 +33,16 @@ describe('PUG points', () => {
     const none = { kills: 0, deaths: 0, assists: 0, netWorth: 0 };
     const out = standings([{ userId: 'a', won: true, ...none }, { userId: 'a', won: false, ...none }, { userId: 'b', won: true, ...none, kills: 10 }, { userId: null, won: true, ...none }]);
     expect(out).toEqual([{ userId: 'b', points: 50, matches: 1, wins: 1, losses: 0 }, { userId: 'a', points: 40, matches: 2, wins: 1, losses: 1 }]);
+  });
+});
+
+describe('heroSummary', () => {
+  it('totals each hero, most played first, and skips unknown heroes', () => {
+    const row = (heroId: number | null, won: boolean) => ({ heroId, won, kills: 2, deaths: 1, assists: null });
+    expect(heroSummary([row(1, false), row(2, true), row(2, false), row(null, true), row(3, true)])).toEqual([
+      { heroId: 2, matches: 2, wins: 1, kills: 4, deaths: 2, assists: 0 },
+      { heroId: 3, matches: 1, wins: 1, kills: 2, deaths: 1, assists: 0 },
+      { heroId: 1, matches: 1, wins: 0, kills: 2, deaths: 1, assists: 0 },
+    ]);
   });
 });

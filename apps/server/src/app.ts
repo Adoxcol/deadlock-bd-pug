@@ -19,7 +19,7 @@ import { PrismaDraftStore, syncHeroes } from './db/draftStore.js';
 import { PrismaResultsRepo } from './db/resultsRepo.js';
 import { audit } from './db/audit.js';
 import { processResult } from './results/process.js';
-import { CALIBRATION_MATCHES, matchPoints, skillRating, standings, underdogBonus } from './rating/points.js';
+import { CALIBRATION_MATCHES, heroSummary, matchPoints, skillRating, standings, underdogBonus } from './rating/points.js';
 import { RedisSessionStore, MemorySessionStore, type SessionStore } from './auth/session.js';
 import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
@@ -597,6 +597,23 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     if (!rec) throw Object.assign(new Error('Draft not found'), { statusCode: 404 });
     return { ...DraftService.publicView(rec), ...(await draftPeople(rec)), serverNow: Date.now(), presence: presence(id), you: req.user ? { id: req.user.id, isModerator: isMod(req.user), displayName: req.user.displayName } : null };
   });
+  /** What captains see of each player: rating and three most played heroes. Respects profile visibility. */
+  app.get('/api/drafts/:id/scouting', async (req) => {
+    const rec = await drafts.get((req.params as { id: string }).id);
+    if (!rec) throw Object.assign(new Error('Draft not found'), { statusCode: 404 });
+    const ids = [...new Set([...Object.values(rec.state.captains), ...rec.state.members.amber, ...rec.state.members.sapphire].filter((x): x is string => !!x))];
+    const [users, rows, skill] = await Promise.all([
+      db.user.findMany({ where: { id: { in: ids } }, select: { id: true, visibility: true } }),
+      db.playerStatistic.findMany({ where: { userId: { in: ids }, result: { rated: true } }, select: { userId: true, heroId: true, won: true, kills: true, deaths: true, assists: true } }),
+      ratingsFor(ids),
+    ]);
+    const canSee = (u: { id: string; visibility: string }) => u.visibility === 'PUBLIC' || req.user?.id === u.id || isMod(req.user) || (u.visibility === 'MEMBERS' && !!req.user);
+    return Object.fromEntries(users.map((u) => {
+      if (!canSee(u)) return [u.id, { hidden: true }];
+      const s = skill.get(u.id)!;
+      return [u.id, { hidden: false, rating: shownRating(s), matches: s.matches, calibration: CALIBRATION_MATCHES, top: heroSummary(rows.filter((r) => r.userId === u.id)).slice(0, 3) }];
+    }));
+  });
   const commandBody = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('start') }), z.object({ kind: z.literal('pause') }), z.object({ kind: z.literal('resume') }), z.object({ kind: z.literal('cancel') }),
     z.object({ kind: z.literal('select'), heroId: z.number().int(), expectedSeq: z.number().int().min(0) }),
@@ -793,7 +810,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const active = scored.filter((s) => seasonRows.find((x) => x.id === s.result.seasonId)?.isActive);
     const pointsHistory = active.map((_, i) => standings(active.slice(0, i + 1).map((s) => withBonus(s, s.result)))[0]!.points);
     const skill = (await ratingsFor([id])).get(id)!;
-    return { skill: { rating: shownRating(skill), matches: skill.matches, calibration: CALIBRATION_MATCHES }, user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
+    const activeSeason = seasonRows.find((x) => x.isActive);
+    const table = activeSeason ? await seasonStandings(activeSeason.id) : [];
+    const place = table.findIndex((r) => r.userId === id);
+    return { rank: place < 0 ? null : { position: place + 1, of: table.length }, heroes: heroSummary(scored), skill: { rating: shownRating(skill), matches: skill.matches, calibration: CALIBRATION_MATCHES }, user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
   });
   app.patch('/api/me/visibility', { preHandler: requireRole('SPECTATOR') }, async (req) => {
     const b = z.object({ visibility: z.enum(['PUBLIC', 'MEMBERS', 'PRIVATE']) }).parse(req.body);
