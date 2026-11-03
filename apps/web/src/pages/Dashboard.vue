@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlayerAvatar from '../components/PlayerAvatar.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Users, Swords, Radio, CalendarCheck, Trophy, FlaskConical, MessageCircle, ArrowRight, Plus, ChevronRight } from 'lucide-vue-next';
 import { api } from '../lib/api';
@@ -104,6 +105,18 @@ const heroOf = (id: number) => heroes.byId(id);
           </div>
         </section>
 
+        <section v-if="data.upcoming?.length" class="card-ornate p-4" aria-label="Next PUG">
+          <h2 class="h-section text-lg mb-3">Next PUG</h2>
+          <ul class="space-y-2">
+            <li v-for="s in data.upcoming" :key="s.id" class="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <span class="font-semibold">{{ s.format }}</span>
+              <span class="text-muted text-sm">{{ s.scheduledAt ? new Date(s.scheduledAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'Starts when full' }}</span>
+              <span class="font-mono text-sm">{{ s.players }}/{{ s.total }} signed up</span>
+              <a v-if="session.me?.discordInvite" :href="session.me.discordInvite" target="_blank" rel="noopener" class="text-xs text-primary hover:underline sm:ml-auto">Sign up on Discord</a>
+            </li>
+          </ul>
+        </section>
+
         <div class="grid xl:grid-cols-[1fr_420px] gap-6">
           <section class="card-ornate p-4 space-y-3 min-w-0">
             <div class="flex items-center justify-between"><h2 class="h-section text-lg">Active PUGs</h2><RouterLink to="/drafts" class="text-xs text-primary hover:underline">View all</RouterLink></div>
@@ -157,7 +170,7 @@ const heroOf = (id: number) => heroes.byId(id);
                   <tbody>
                     <tr v-for="(p, i) in data.leaderboard" :key="p.userId" class="hover:bg-raised/40">
                       <td :class="['font-display tabular-nums', i === 0 ? 'text-primary' : 'text-muted']">{{ i + 1 }}</td>
-                      <td><RouterLink :to="`/players/${p.userId}`" class="font-medium hover:text-primary truncate block max-w-[160px]">{{ p.displayName }}</RouterLink></td>
+                      <td><RouterLink :to="`/players/${p.userId}`" class="font-medium hover:text-primary flex items-center gap-2 max-w-[160px]"><PlayerAvatar :name="p.displayName" :src="p.avatarUrl" class="w-6 h-6 text-[10px]" /><span class="truncate">{{ p.displayName }}</span></RouterLink></td>
                       <td class="text-right font-display tabular-nums">{{ p.points.toLocaleString() }}</td>
                       <td class="text-right tabular-nums text-muted">{{ p.wins }} / {{ p.losses }}</td>
                     </tr>

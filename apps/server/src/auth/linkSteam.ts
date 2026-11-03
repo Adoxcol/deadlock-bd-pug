@@ -5,12 +5,29 @@ export function parseSteamName(xml: string): string | null {
   return /<steamID><!\[CDATA\[([\s\S]*?)\]\]><\/steamID>/.exec(xml)?.[1]?.trim() || null;
 }
 
-/** Steam's public profile XML needs no API key and gives the name even for private profiles. Null if unavailable. */
-export async function fetchSteamName(id64: string): Promise<string | null> {
+export function parseSteamAvatar(xml: string): string | null {
+  const url = /<avatarFull><!\[CDATA\[([\s\S]*?)\]\]><\/avatarFull>/.exec(xml)?.[1]?.trim();
+  return url?.startsWith('https://') ? url : null;
+}
+
+/** Steam's public profile XML needs no API key and gives these even for private profiles. Null if unavailable. */
+export async function fetchSteamProfile(id64: string): Promise<{ name: string | null; avatarUrl: string | null } | null> {
   try {
     const res = await fetch(`https://steamcommunity.com/profiles/${id64}/?xml=1`, { signal: AbortSignal.timeout(10_000) });
-    return res.ok ? parseSteamName(await res.text()) : null;
+    if (!res.ok) return null;
+    const xml = await res.text();
+    return { name: parseSteamName(xml), avatarUrl: parseSteamAvatar(xml) };
   } catch { return null; }
+}
+
+export const discordAvatarUrl = (discordId: string, hash: string | null) => (hash ? `https://cdn.discordapp.com/avatars/${discordId}/${hash}.png?size=128` : null);
+
+/** Steam's picture wins; Discord's is the fallback. */
+export async function syncAvatar(db: PrismaClient, userId: string) {
+  const u = await db.user.findUnique({ where: { id: userId }, select: { avatarUrl: true, steam: { select: { avatarUrl: true } }, discord: { select: { discordId: true, avatar: true } } } });
+  if (!u) return;
+  const avatarUrl = u.steam?.avatarUrl ?? (u.discord ? discordAvatarUrl(u.discord.discordId, u.discord.avatar) : null);
+  if (avatarUrl !== u.avatarUrl) await db.user.update({ where: { id: userId }, data: { avatarUrl } });
 }
 
 /** Makes the Steam name the player's name everywhere, including their past match rows. */

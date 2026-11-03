@@ -69,6 +69,8 @@ enum ProfileVisibility {
 model User {
   id                String            @id @default(cuid())
   displayName       String
+  /// Steam picture if linked, otherwise Discord. Kept current by syncAvatar.
+  avatarUrl         String?
   role              Role              @default(PLAYER)
   visibility        ProfileVisibility @default(PUBLIC)
   isSimulated       Boolean           @default(false)
@@ -96,6 +98,7 @@ model SteamAccount {
   steamId64   String   @unique
   accountId   String   @unique // SteamID3 account id used by Deadlock API
   personaName String?
+  avatarUrl   String?
   linkedAt    DateTime @default(now())
 }
 
@@ -122,6 +125,35 @@ model Season {
   softResetFactor Float               @default(1) // 1 = full reset to initial, 0 = carry over
   ratings         PlayerRating[]
   transactions    RatingTransaction[]
+}
+
+/// A Discord sign-up message. It becomes a PUG room once enough linked players join.
+model PugSignup {
+  id          String            @id @default(cuid())
+  channelId   String
+  messageId   String?
+  createdById String
+  format      String
+  captainMode String            @default("rated")
+  scheduledAt DateTime?
+  /// OPEN, FILLED or CANCELLED
+  status      String            @default("OPEN")
+  pugId       String?
+  createdAt   DateTime          @default(now())
+  players     PugSignupPlayer[]
+
+  @@index([status])
+}
+
+model PugSignupPlayer {
+  id        String    @id @default(cuid())
+  signupId  String
+  signup    PugSignup @relation(fields: [signupId], references: [id], onDelete: Cascade)
+  userId    String
+  discordId String
+  joinedAt  DateTime  @default(now())
+
+  @@unique([signupId, userId])
 }
 
 model PugSession {

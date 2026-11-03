@@ -6,6 +6,7 @@ import { useSession } from './stores/session';
 import { realtime } from './lib/ws';
 import { takeReturn } from './lib/returnTo';
 import Logo from './components/Logo.vue';
+import PlayerAvatar from './components/PlayerAvatar.vue';
 
 const session = useSession();
 const route = useRoute();
@@ -31,7 +32,6 @@ const nav = computed(() => [
   { to: '/admin', label: 'Admin', icon: Shield, min: 'MODERATOR' as const },
 ].filter((n) => !n.min || session.can(n.min)));
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to) || (to === '/drafts' && route.path.startsWith('/draft')));
-const initial = computed(() => session.user?.displayName.replace('[SIM] ', '').charAt(0).toUpperCase() ?? '?');
 const STEAM_HINT_KEY = 'steam-hint-dismissed';
 const readHint = () => { try { return localStorage.getItem(STEAM_HINT_KEY) === '1'; } catch { return false; } };
 const hintDismissed = ref(readHint());
@@ -60,7 +60,7 @@ const steamHint = computed(() => !!session.user && !session.user.isSimulated && 
           <template v-if="session.user">
             <RouterLink v-if="session.can('PLAYER')" to="/drafts/new" class="btn-primary !h-9 hidden sm:inline-flex"><Plus class="w-4 h-4" />Create lobby</RouterLink>
             <RouterLink :to="`/players/${session.user.id}`" class="flex items-center gap-2 h-10 pl-1 pr-3 rounded-lg hover:bg-raised">
-              <span class="w-8 h-8 rounded-full bg-primary/20 border border-primary/40 grid place-items-center text-sm font-bold">{{ initial }}</span>
+              <PlayerAvatar :name="session.user.displayName" :src="session.user.avatarUrl" class="w-8 h-8 text-sm" />
               <span class="hidden md:block leading-tight text-left"><span class="block text-sm font-semibold max-w-[140px] truncate">{{ session.user.displayName }}</span><span class="block text-[11px] text-muted capitalize">{{ session.user.role.toLowerCase() }}</span></span>
             </RouterLink>
             <button class="btn-ghost !h-9 !px-2" title="Log out" aria-label="Log out" @click="session.logout()"><LogOut class="w-4 h-4" /></button>

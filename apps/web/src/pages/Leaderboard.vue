@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlayerAvatar from '../components/PlayerAvatar.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { Search, Crown } from 'lucide-vue-next';
 import UiSelect from '../components/UiSelect.vue';
@@ -67,7 +68,7 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
           <tbody>
             <tr v-for="r in rows" :key="r.userId" class="hover:bg-raised/50">
               <td><span :class="['font-display text-lg tabular-nums', r.rank === 1 ? 'text-primary' : r.rank <= 3 ? 'text-text' : 'text-muted']">{{ r.rank }}</span></td>
-              <td><RouterLink :to="`/players/${r.userId}`" class="font-semibold hover:text-primary">{{ r.displayName }}</RouterLink></td>
+              <td><RouterLink :to="`/players/${r.userId}`" class="font-semibold hover:text-primary inline-flex items-center gap-2"><PlayerAvatar :name="r.displayName" :src="r.avatarUrl" class="w-7 h-7 text-xs" />{{ r.displayName }}</RouterLink></td>
               <td class="text-right font-display text-base tabular-nums">{{ r.points.toLocaleString() }}</td>
               <td class="text-right tabular-nums"><span v-if="r.rating != null" class="font-display">{{ r.rating }}</span><span v-else class="text-xs text-muted">Unrated</span></td>
               <td class="text-right tabular-nums text-accent">{{ r.wins }}</td><td class="text-right tabular-nums text-danger">{{ r.losses }}</td>

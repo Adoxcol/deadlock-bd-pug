@@ -10,6 +10,8 @@ RUN cd apps/server && npx prisma generate && npx tsc -p tsconfig.json && cd ../w
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production WEB_DIST_DIR=/app/web
+# Share cards draw their text with this font.
+RUN apk add --no-cache font-dejavu
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/server/prisma ./apps/server/prisma

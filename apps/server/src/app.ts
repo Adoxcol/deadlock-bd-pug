@@ -3,7 +3,7 @@ import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes, randomUUID, randomInt } from 'node:crypto';
 import { z } from 'zod';
@@ -13,7 +13,7 @@ import type { Config } from './config.js';
 import { Hub } from './realtime/hub.js';
 import { DraftService, generateRoomCode } from './draft/service.js';
 import { DraftError, TEAM_SIZE, applyFormationCommand, createDraftState, buildDefaultSequence } from './draft/engine.js';
-import { applyInvite, defaultTeamName, newFormation, type Formation, type InviteRole } from './draft/formation.js';
+import { applyInvite, chooseCaptains, defaultTeamName, formFromSignup, newFormation, type CaptainMode, type Formation, type InviteRole } from './draft/formation.js';
 import { RedisLock, MemoryLock, LockBusyError } from './draft/lock.js';
 import { PrismaDraftStore, syncHeroes } from './db/draftStore.js';
 import { PrismaResultsRepo } from './db/resultsRepo.js';
@@ -24,7 +24,7 @@ import { RedisSessionStore, MemorySessionStore, type SessionStore } from './auth
 import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
 import { steamLoginUrl, verifySteamAssertion } from './auth/steam.js';
-import { applySteamName, fetchSteamName, linkSteam } from './auth/linkSteam.js';
+import { applySteamName, fetchSteamProfile, linkSteam, syncAvatar } from './auth/linkSteam.js';
 import { importKnownMatch, importMatch, previewMatchImport, recordLobbyResult } from './results/importMatch.js';
 import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
 import { normalizeReplay } from './tracker/replay.js';
@@ -34,6 +34,9 @@ import { resolveIdentifier } from './tracker/resolve.js';
 import { LiveManager } from './live/ingestor.js';
 import { simulateMatch } from './sim/simulator.js';
 import { Notifier, COLORS, type Sender } from './discord/notifier.js';
+import { SignupService, signupTotal } from './discord/signups.js';
+import { matchCardSvg, pickMvp, playerCardSvg, renderPng, siteCardSvg, withMeta, type MatchCard, type PageMeta } from './share/card.js';
+import { weekBoundary, weeklyHighlights } from './share/weekly.js';
 import { providers, validateImport } from './draft/providers.js';
 import { LobbyService, LobbyError } from './lobby/service.js';
 import { parseCallbackMatchId, verifyCallbackSecret } from './lobby/callback.js';
@@ -188,8 +191,9 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   const steamNamePoll = setInterval(() => void (async () => {
     const accounts = await db.steamAccount.findMany({ where: { user: { isSimulated: false } }, include: { user: { select: { displayName: true } } } });
     for (const a of accounts) {
-      const name = await fetchSteamName(a.steamId64);
-      if (name && (name !== a.personaName || name !== a.user.displayName)) await applySteamName(db, a.userId, name);
+      const profile = await fetchSteamProfile(a.steamId64);
+      if (profile?.name && (profile.name !== a.personaName || profile.name !== a.user.displayName)) await applySteamName(db, a.userId, profile.name);
+      if (profile?.avatarUrl && profile.avatarUrl !== a.avatarUrl) { await db.steamAccount.update({ where: { id: a.id }, data: { avatarUrl: profile.avatarUrl } }); await syncAvatar(db, a.userId); }
       await new Promise((r) => setTimeout(r, 1500));
     }
   })().catch((e) => app.log.warn(`steam name refresh failed: ${(e as Error).message}`)), 6 * 3600_000);
@@ -208,7 +212,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       try {
         if (!await recordLobbyResult(db, api, m.id, draft?.state.assignments ?? [])) continue;
         await audit(db, null, 'match.result.auto', 'Match', m.id, null, { deadlockMatchId: m.deadlockMatchId });
-        await notifier.enqueue('match.result', `match.result:${m.id}`, { title: 'Match result recorded', description: 'Official data from the Deadlock API', url: `${cfg.PUBLIC_URL}/matches/${m.id}`, color: COLORS.teal }, false);
+        await notifier.enqueue('match.result', `match.result:${m.id}`, { title: 'Match result recorded', description: 'Official data from the Deadlock API', url: `${cfg.PUBLIC_URL}/matches/${m.id}`, color: COLORS.teal, ...await resultExtras(m.id) }, false);
         hub.publish('dashboard', 'match.completed', { id: m.id });
       } catch (e) {
         const code = (e as { statusCode?: number }).statusCode;
@@ -254,7 +258,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     if (!atLeast(req.user.role as Role, min)) return reply.code(403).send({ error: 'Insufficient permissions' });
   };
   const isMod = (u: User | null) => atLeast(u?.role as Role | undefined, 'MODERATOR');
-  const publicUser = (u: User) => ({ id: u.id, displayName: u.displayName, role: u.role, isSimulated: u.isSimulated });
+  const publicUser = (u: User) => ({ id: u.id, displayName: u.displayName, avatarUrl: u.avatarUrl, role: u.role, isSimulated: u.isSimulated });
 
   app.setErrorHandler((err: Error, _req, reply) => {
     if (err instanceof DraftError) return reply.code(err.code === 'FORBIDDEN' ? 403 : 409).send({ error: err.message, code: err.code });
@@ -301,6 +305,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       const u = await db.user.create({ data: { displayName: du.global_name ?? du.username, role: owners.includes(du.id) ? 'OWNER' : 'PLAYER', discord: { create: { discordId: du.id, username: du.username, avatar: du.avatar } } } });
       userId = u.id;
     }
+    await syncAvatar(db, userId!);
     await setSession(reply, userId!);
     return reply.redirect('/');
   });
@@ -310,8 +315,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     if (!id64) return reply.redirect('/profile?steam=failed');
     const outcome = await linkSteam(db, req.user!.id, id64);
     if (outcome.status === 'taken') return reply.redirect('/profile?steam=taken');
-    const steamName = await fetchSteamName(id64);
-    if (steamName) await applySteamName(db, req.user!.id, steamName);
+    const profile = await fetchSteamProfile(id64);
+    if (profile?.name) await applySteamName(db, req.user!.id, profile.name);
+    if (profile?.avatarUrl) await db.steamAccount.update({ where: { userId: req.user!.id }, data: { avatarUrl: profile.avatarUrl } });
+    await syncAvatar(db, req.user!.id);
     await audit(db, req.user!.id, 'steam.link', 'User', req.user!.id, null, { steamId64: id64, claimedMatches: outcome.claimed });
     return reply.redirect(`/profile?steam=linked&claimed=${outcome.claimed}`);
   });
@@ -336,7 +343,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
 
   app.get('/api/dashboard', async () => {
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
-    const [activePugs, members, completedToday, liveMatches, recent, season, pugsPlayed] = await Promise.all([
+    const [activePugs, members, completedToday, liveMatches, recent, season, pugsPlayed, openSignups] = await Promise.all([
       db.pugSession.findMany({ where: { status: { in: ['WAITING', 'DRAFTING', 'LIVE'] } }, include: { teams: true, participants: true, draftRooms: { orderBy: { createdAt: 'desc' }, take: 1 }, matches: { orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: { number: 'desc' } }),
       db.user.count({ where: { isSimulated: false } }),
       db.matchResult.count({ where: { createdAt: { gte: startOfDay } } }),
@@ -344,6 +351,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       db.matchResult.findMany({ orderBy: { createdAt: 'desc' }, take: 6, include: { match: { include: { pug: { include: { teams: true } } } } } }),
       db.season.findFirst({ where: { isActive: true } }),
       db.pugSession.count({ where: { status: 'COMPLETED', isSimulated: false } }),
+      signups.nextOpen(),
     ]);
     const activeDrafts = await store.listActive();
     const drafting = activeDrafts.filter((d) => d.state.status === 'drafting' || d.state.status === 'paused');
@@ -358,10 +366,95 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       })),
       drafts: activeDrafts.filter((d) => d.visibility === 'public').map((d) => ({ id: d.id, code: d.code, name: d.name, status: d.state.status, teamNames: d.teamNames, simulated: d.simulated, startedAt: d.state.startedAt, format: d.state.config.format, picks: d.state.picks, players: [d.state.captains.amber, d.state.captains.sapphire].filter(Boolean).length + d.state.members.amber.length + d.state.members.sapphire.length })),
       recent: recent.map((r) => ({ matchId: r.matchId, winner: r.winner, source: r.source, verified: r.verified, durationSec: r.match.durationSec, date: r.createdAt, pugNumber: r.match.pug?.number ?? null, isSimulated: r.match.isSimulated, teams: Object.fromEntries((r.match.pug?.teams ?? []).map((t) => [t.side.toLowerCase(), t.name])) })),
-      leaderboard: top.map((t) => ({ userId: t.userId, displayName: t.user.displayName, points: t.points, wins: t.wins, losses: t.losses })),
+      leaderboard: top.map((t) => ({ userId: t.userId, displayName: t.user.displayName, avatarUrl: t.user.avatarUrl, points: t.points, wins: t.wins, losses: t.losses })),
       season: season && { id: season.id, name: season.name, isSimulated: season.isSimulated },
+      upcoming: openSignups.map((s) => ({ id: s.id, format: s.format, scheduledAt: s.scheduledAt, players: s._count.players, total: signupTotal(s.format) })),
     };
   });
+
+  // ---------- Share cards ----------
+  const pngCache = new Map<string, Buffer>();
+  const cachedPng = async (key: string, svg: () => Promise<string | null>) => {
+    const hit = pngCache.get(key);
+    if (hit) return hit;
+    const source = await svg();
+    if (!source) return null;
+    const png = await renderPng(source);
+    if (pngCache.size >= 200) pngCache.delete(pngCache.keys().next().value!);
+    pngCache.set(key, png);
+    return png;
+  };
+  const matchCard = async (id: string): Promise<MatchCard | null> => {
+    const m = await db.match.findUnique({ where: { id }, include: { result: { include: { stats: true } }, pug: { include: { teams: true } } } });
+    if (!m?.result) return null;
+    const team = (side: 'AMBER' | 'SAPPHIRE', fallback: string) => m.pug?.teams.find((t) => t.side === side)?.name ?? fallback;
+    return { winner: m.result.winner, amberName: team('AMBER', 'Team Amber'), sapphireName: team('SAPPHIRE', 'Team Sapphire'), durationSec: m.durationSec, simulated: m.isSimulated, verified: m.result.verified,
+      stats: m.result.stats.map((s) => ({ name: s.displayNameSnapshot.replace('[SIM] ', ''), team: s.team, won: s.won, heroName: s.heroId === null ? null : heroName(s.heroId), kills: s.kills, deaths: s.deaths, assists: s.assists, netWorth: s.netWorth, heroDamage: s.heroDamage })) };
+  };
+  /** Private profiles get no card or preview. */
+  const playerCard = async (id: string) => {
+    const u = await db.user.findUnique({ where: { id } });
+    if (!u || u.visibility === 'PRIVATE') return null;
+    const rows = await db.playerStatistic.findMany({ where: { userId: id, result: { rated: true } }, select: { won: true, kills: true, deaths: true, assists: true, heroId: true } });
+    const [hero] = heroSummary(rows);
+    const rating = (await ratingsFor([id])).get(id)!;
+    return { name: u.displayName, rating: shownRating(rating), matches: rows.length, wins: rows.filter((r) => r.won).length, topHero: hero ? heroName(hero.heroId) : null };
+  };
+  const sendPng = (reply: FastifyReply, png: Buffer | null) => (png ? reply.type('image/png').header('Cache-Control', 'public, max-age=3600').send(png) : reply.code(404).send({ error: 'Not found' }));
+  app.get('/api/matches/:id/card.png', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return sendPng(reply, await cachedPng(`match:${id}`, async () => { const c = await matchCard(id); return c && matchCardSvg(c); }));
+  });
+  app.get('/api/players/:id/card.png', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const c = await playerCard(id);
+    return sendPng(reply, c && await renderPng(playerCardSvg(c)));
+  });
+  app.get('/api/share.png', async (_req, reply) => sendPng(reply, await cachedPng('site', async () => siteCardSvg())));
+  /** Adds the image and MVP to a result post. Stats may not be published yet; the card then shows the winner alone. */
+  const resultExtras = async (id: string) => {
+    const mvp = pickMvp((await matchCard(id))?.stats ?? []);
+    return { image: { url: `${cfg.PUBLIC_URL}/api/matches/${id}/card.png` }, ...(mvp ? { fields: [{ name: 'MVP', value: `${mvp.name} (${mvp.kills}/${mvp.deaths ?? 0}/${mvp.assists ?? 0})` }] } : {}) };
+  };
+  async function previewFor(path: string): Promise<PageMeta> {
+    const url = `${cfg.PUBLIC_URL}${path}`;
+    const site = { title: 'Deadlock PUG Bangladesh', description: "Bangladesh's Deadlock PUG community: live hero drafts, match stats and a leaderboard.", image: `${cfg.PUBLIC_URL}/api/share.png`, url };
+    const match = /^\/matches\/([^/]+)$/.exec(path)?.[1];
+    if (match) {
+      const c = await matchCard(match);
+      if (!c) return site;
+      const mvp = pickMvp(c.stats);
+      const [won, lost] = c.winner === 'AMBER' ? [c.amberName, c.sapphireName] : [c.sapphireName, c.amberName];
+      return { ...site, title: `${won} beat ${lost}`, description: `${c.simulated ? 'Simulated match. ' : ''}${mvp ? `MVP: ${mvp.name} (${mvp.kills}/${mvp.deaths ?? 0}/${mvp.assists ?? 0}). ` : ''}Full stats on Deadlock PUG Bangladesh.`, image: `${cfg.PUBLIC_URL}/api/matches/${match}/card.png` };
+    }
+    const player = /^\/players\/([^/]+)$/.exec(path)?.[1];
+    if (player) {
+      const c = await playerCard(player);
+      if (!c) return site;
+      return { ...site, title: `${c.name} on Deadlock PUG Bangladesh`, description: `${c.rating === null ? 'Calibrating' : `Rating ${c.rating}`} · ${c.matches} matches · ${c.wins} wins${c.topHero ? ` · Top hero: ${c.topHero}` : ''}`, image: `${cfg.PUBLIC_URL}/api/players/${player}/card.png` };
+    }
+    return site;
+  }
+
+  // ---------- Weekly highlights ----------
+  async function postWeeklyHighlights(now = new Date()) {
+    const end = weekBoundary(now), start = new Date(end.getTime() - 7 * 24 * 3600_000);
+    const key = `weekly:${end.toISOString().slice(0, 10)}`;
+    if (await db.discordNotification.findUnique({ where: { dedupeKey: key } })) return;
+    const load = (createdAt: Prisma.DateTimeFilter) => db.playerStatistic.findMany({ where: { userId: { not: null }, result: { rated: true, createdAt, match: { isSimulated: false } } }, select: { resultId: true, userId: true, team: true, won: true, heroId: true, kills: true, deaths: true, assists: true, netWorth: true, result: { select: { amberRating: true, sapphireRating: true } } } });
+    const [weekRows, beforeRows] = await Promise.all([load({ gte: start, lt: end }), load({ lt: start })]);
+    const shown = new Set((await db.user.findMany({ where: { id: { in: [...new Set(weekRows.map((r) => r.userId!))] }, visibility: { not: 'PRIVATE' } }, select: { id: true } })).map((u) => u.id));
+    const rows = (list: typeof weekRows) => list.filter((r) => shown.has(r.userId!)).map((r) => ({ ...withBonus(r, r.result), userId: r.userId! }));
+    const w = weeklyHighlights(rows(weekRows), rows(beforeRows), new Set(weekRows.map((r) => r.resultId)).size);
+    if (!w) return;
+    const names = new Map((await db.user.findMany({ where: { id: { in: [w.top.userId, ...(w.improver ? [w.improver.userId] : [])] } }, select: { id: true, displayName: true } })).map((u) => [u.id, u.displayName]));
+    await notifier.enqueue('weekly.highlights', key, { title: 'Weekly highlights', description: `${w.matches} rated match${w.matches === 1 ? '' : 'es'} this week.`, url: `${cfg.PUBLIC_URL}/leaderboard`, color: COLORS.purple, fields: [
+      { name: 'Top player', value: `${names.get(w.top.userId)}: ${w.top.points} pts (${w.top.wins}W/${w.top.losses}L)` },
+      ...(w.improver ? [{ name: 'Biggest improver', value: `${names.get(w.improver.userId)}: +${w.improver.gain} rating` }] : []),
+      ...(w.hero ? [{ name: 'Most played hero', value: `${heroName(w.hero.heroId)}: ${w.hero.matches} picks` }] : []),
+    ] });
+  }
+  setInterval(() => void postWeeklyHighlights().catch((e) => app.log.warn(`weekly highlights failed: ${(e as Error).message}`)), 15 * 60_000).unref();
 
   // ---------- PUGs ----------
   const lobbyRules = z.object({
@@ -501,6 +594,15 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     return result;
   }
   const toss = () => (randomInt(2) === 0 ? 'a' : 'b') as 'a' | 'b';
+  const signups = new SignupService(db, notifier, cfg.PUBLIC_URL, async (hostId, format, userIds, mode: CaptainMode) => {
+    const ratings = await ratingsFor(userIds);
+    const captains = chooseCaptains(userIds.map((id) => ({ id, rating: shownRating(ratings.get(id)!) })), mode);
+    const pug = await createPug(hostId, { format: format as '6v6', draftProvider: 'NATIVE', amberName: 'Team Amber', sapphireName: 'Team Sapphire' });
+    await changeFormation(pug.id, { id: hostId, isSimulated: false }, (current, size) => formFromSignup(current, userIds, captains, size, toss));
+    await audit(db, hostId, 'pug.signup.filled', 'PugSession', pug.id, null, { captains, mode });
+    return { id: pug.id, number: pug.number, captains };
+  }, (channelId, messageId, embed) => (opts.discordSender ? opts.discordSender.edit(channelId, messageId, embed) : Promise.resolve()), (e) => app.log.warn(`signup: ${(e as Error).message}`));
+  setInterval(() => void signups.tick().catch((e) => app.log.warn(`signup tick failed: ${(e as Error).message}`)), 60_000).unref();
   app.post('/api/pugs/:id/formation', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 30, timeWindow: '10 seconds' } } }, async (req) => {
     const { command, expectedSeq } = formationBody.parse(req.body);
     return changeFormation((req.params as { id: string }).id, req.user!, (current, size, pug) => {
@@ -674,6 +776,11 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const lobby = await lock.withLock(`lobby:${id}`, () => lobbies.create({ draftId: id, pugId: rec.pugId, createdById: req.user!.id, teamSize: TEAM_SIZE[rec.state.config.format], allowDuplicateHeroes: rec.state.config.allowMirrorPicks }));
     await audit(db, req.user!.id, 'lobby.create', 'Match', lobby.matchRowId, null, { draftId: id, partyId: lobby.partyId });
     hub.publish(`draft:${id}`, 'draft.lobby', lobbyFor(lobby, false)); // participants refetch to get the code
+    if (lobby.partyCode && !rec.simulated) {
+      // The code goes only to this draft's roster; a channel message would give it to spectators.
+      const roster = [rec.state.captains.amber, rec.state.captains.sapphire, ...rec.state.members.amber, ...rec.state.members.sapphire].filter((u): u is string => !!u);
+      for (const a of await db.discordAccount.findMany({ where: { userId: { in: roster } } })) await notifier.enqueue('lobby.code', `lobby.code:${lobby.matchRowId}:${a.discordId}`, { title: 'Your lobby is ready', description: `Party code: **${lobby.partyCode}**\nThe lobby bot leaves after 15 minutes.`, url: `${cfg.PUBLIC_URL}/draft/${id}`, color: COLORS.teal }, false, { discordId: a.discordId });
+    }
     return { lobby };
   });
   // deadlock-api POSTs here when the match starts, and to /settings when lobby settings change.
@@ -764,7 +871,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       if (m.deadlockMatchId) await importMatchStats(id).catch((e) => app.log.warn(`stats import failed: ${(e as Error).message}`));
       if (m.pugId) await db.pugSession.update({ where: { id: m.pugId }, data: { status: 'COMPLETED', completedAt: new Date() } });
       await audit(db, req.user!.id, 'match.result.manual', 'Match', id, null, { ...b, outcome });
-      await notifier.enqueue('match.result', `match.result:${id}`, { title: `Result: Team ${b.winner === 'amber' ? 'Amber' : 'Sapphire'} wins`, description: `${source === 'MANUAL' ? 'Manually verified by a moderator' : 'Simulated'}`, url: `${cfg.PUBLIC_URL}/matches/${id}`, color: COLORS.teal }, m.isSimulated);
+      await notifier.enqueue('match.result', `match.result:${id}`, { title: `Result: Team ${b.winner === 'amber' ? 'Amber' : 'Sapphire'} wins`, description: `${source === 'MANUAL' ? 'Manually verified by a moderator' : 'Simulated'}`, url: `${cfg.PUBLIC_URL}/matches/${id}`, color: COLORS.teal, ...await resultExtras(id) }, m.isSimulated);
       hub.publish('dashboard', 'match.completed', { id });
     }
     return outcome;
@@ -802,7 +909,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const fav = new Map<string, { heroId: number; n: number }>();
     for (const h of heroCounts) { const c = fav.get(h.userId!); if (!c || h._count > c.n) fav.set(h.userId!, { heroId: h.heroId!, n: h._count }); }
     return { season: { id: season.id, name: season.name, isSimulated: season.isSimulated }, rows: rows.map((r, i) => ({
-      rank: i + 1, userId: r.userId, displayName: r.user.displayName, points: r.points, rating: shownRating(skill.get(r.userId)!), wins: r.wins, losses: r.losses, matches: r.matches,
+      rank: i + 1, userId: r.userId, displayName: r.user.displayName, avatarUrl: r.user.avatarUrl, points: r.points, rating: shownRating(skill.get(r.userId)!), wins: r.wins, losses: r.losses, matches: r.matches,
       winRate: r.matches ? r.wins / r.matches : null, avg: sMap.get(r.userId) ?? null, mostPlayedHero: fav.get(r.userId) ? heroName(fav.get(r.userId)!.heroId) : null,
     })) };
   });
@@ -917,7 +1024,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
         }) });
         await db.match.update({ where: { id: match.id }, data: { trackingState: 'MATCH_COMPLETED', durationSec: Math.round(ls.gameTime ?? 0), endedAt: new Date() } });
         await db.pugSession.update({ where: { id: pug.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
-        await notifier.enqueue('match.result', `match.result:${match.id}`, { title: `Result: Team ${winner === 'amber' ? 'Amber' : 'Sapphire'} wins`, url: `${cfg.PUBLIC_URL}/matches/${match.id}`, color: COLORS.teal }, true);
+        await notifier.enqueue('match.result', `match.result:${match.id}`, { title: `Result: Team ${winner === 'amber' ? 'Amber' : 'Sapphire'} wins`, url: `${cfg.PUBLIC_URL}/matches/${match.id}`, color: COLORS.teal, ...await resultExtras(match.id) }, true);
         hub.publish('dashboard', 'match.completed', { id: match.id });
       })().catch((e) => app.log.error(e, 'simulation failed'));
       return { pugId: pug.id, draftId: rec.id };
@@ -972,6 +1079,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   if (cfg.WEB_DIST_DIR) {
     const root = resolve(cfg.WEB_DIST_DIR);
     if (!existsSync(resolve(root, 'index.html'))) throw new Error(`WEB_DIST_DIR has no index.html: ${root}`);
+    const indexHtml = readFileSync(resolve(root, 'index.html'), 'utf8');
     await app.register(fastifyStatic, {
       root, wildcard: false, index: false, cacheControl: false, // our setHeaders decides caching
       // Hashed assets are immutable; index.html must always be revalidated so new deploys show up immediately.
@@ -979,7 +1087,9 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     });
     app.setNotFoundHandler((req, reply) => {
       if (req.method !== 'GET' || req.url.startsWith('/api/') || req.url.startsWith('/ws')) return reply.code(404).send({ error: 'Not found' });
-      return reply.header('Cache-Control', 'no-cache').sendFile('index.html', { cacheControl: false });
+      const path = req.url.split('?')[0] ?? '/';
+      // Chat and social crawlers don't run the app, so previews have to be in the HTML itself.
+      return previewFor(path).catch(() => ({ title: 'Deadlock PUG Bangladesh', description: '', image: `${cfg.PUBLIC_URL}/api/share.png`, url: `${cfg.PUBLIC_URL}${path}` })).then((meta) => reply.header('Cache-Control', 'no-cache').type('text/html').send(withMeta(indexHtml, meta)));
     });
   }
 
@@ -989,7 +1099,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     if (out.status === 'imported') await audit(db, userId, 'match.import', 'Match', out.id, null, { deadlockMatchId: matchId, via: 'discord' });
     return out;
   };
-  return { app, db, hub, drafts, createPug, importFromDiscord, leaderboardTop: async (n: number) => {
+  return { app, db, hub, drafts, signups, createPug, importFromDiscord, leaderboardTop: async (n: number) => {
     const s = await db.season.findFirst({ where: { isActive: true } });
     if (!s) return [];
     return (await seasonStandings(s.id)).slice(0, n).map((r) => ({ displayName: r.user.displayName, points: r.points, wins: r.wins, losses: r.losses }));

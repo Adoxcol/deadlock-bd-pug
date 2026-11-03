@@ -5,10 +5,15 @@ import type { Sender } from './discord/notifier.js';
 
 const cfg = loadConfig();
 let sender: Sender | null = null;
-const built = await buildApp(cfg, { discordSender: { send: (c, e) => (sender ? sender.send(c, e) : Promise.reject(new Error('Discord bot not ready'))) } });
+const notReady = () => Promise.reject(new Error('Discord bot not ready'));
+const built = await buildApp(cfg, { discordSender: {
+  send: (c, e) => (sender ? sender.send(c, e) : notReady()),
+  dm: (d, e) => (sender ? sender.dm(d, e) : notReady()),
+  edit: (c, m, e) => (sender ? sender.edit(c, m, e) : notReady()),
+} });
 if (cfg.DISCORD_BOT_TOKEN && cfg.DISCORD_CLIENT_ID) {
   startBot(cfg.DISCORD_BOT_TOKEN, cfg.DISCORD_CLIENT_ID, cfg.DISCORD_GUILD_ID, {
-    db: built.db, publicUrl: cfg.PUBLIC_URL,
+    db: built.db, publicUrl: cfg.PUBLIC_URL, signups: built.signups,
     createPug: (uid) => built.createPug(uid, { format: '6v6', draftProvider: 'NATIVE', amberName: 'Team Amber', sapphireName: 'Team Sapphire' }),
     leaderboard: built.leaderboardTop,
     importMatch: built.importFromDiscord,

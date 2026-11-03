@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlayerAvatar from '../components/PlayerAvatar.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Copy, Crown, LogIn, Users } from 'lucide-vue-next';
@@ -45,6 +46,7 @@ const teamBonus = (t: CaptainSeat) => {
   if (!n || n !== f.teams.b.length) return null;
   return underdogBonus(t === 'a' ? 'AMBER' : 'SAPPHIRE', true, Math.round(teamTotal('a') / n), Math.round(teamTotal('b') / n));
 };
+const avatar = (id: string | null) => (room.value?.participants.find((p) => p.userId === id)?.user as { avatarUrl?: string | null } | undefined)?.avatarUrl;
 const captainName = (t: CaptainSeat | null) => t ? name(state.value?.captains[t] ?? null) : '';
 const inviteToken = computed(() => (typeof route.query.k === 'string' ? route.query.k : null));
 const invited = computed(() => !!room.value?.code);
@@ -233,7 +235,7 @@ onUnmounted(() => clearInterval(timer));
             <p class="text-sm break-words">Captain: {{ name(state.captains[t]) }}</p>
             <TeamNameInput v-if="invited && active && seat === t" :value="state.teamNames?.[t] ?? ''" :placeholder="defaultTeamName(name(state.captains[t]))" label="Team name" @save="(n) => command({ kind: 'teamName', name: n })" />
             <ul class="divide-y divide-line text-sm">
-              <li v-for="id in state.teams[t]" :key="id" class="py-2 break-words flex justify-between gap-3"><span>{{ name(id) }} <span v-if="id === me" class="text-muted">(you)</span></span><span class="font-mono text-xs tabular-nums text-muted">{{ ratingLabel(id) }}</span></li>
+              <li v-for="id in state.teams[t]" :key="id" class="py-2 break-words flex justify-between gap-3"><span class="flex items-center gap-2 min-w-0"><PlayerAvatar :name="name(id)" :src="avatar(id)" class="w-6 h-6 text-[10px]" />{{ name(id) }} <span v-if="id === me" class="text-muted">(you)</span></span><span class="font-mono text-xs tabular-nums text-muted">{{ ratingLabel(id) }}</span></li>
             </ul>
             <div v-if="active && state.phase === 'waiting' && joined" class="flex flex-wrap gap-2">
               <button v-if="!invited && !seat && !state.captains[t]" class="btn-ghost" :disabled="pending" @click="command({ kind: 'captain', seat: t })">Become captain</button>
@@ -248,7 +250,7 @@ onUnmounted(() => clearInterval(timer));
           <p v-if="!available.length" class="text-sm text-muted">{{ state.phase === 'waiting' ? 'Players can join the pool above or arrange teams below the captain seats.' : 'No unassigned players.' }}</p>
           <ul class="divide-y divide-line">
             <li v-for="id in available" :key="id" class="flex items-center justify-between gap-3 py-3">
-              <span class="text-sm break-words min-w-0">{{ name(id) }} <span class="font-mono text-xs tabular-nums text-muted">{{ ratingLabel(id) }}</span></span>
+              <span class="text-sm break-words min-w-0 flex items-center gap-2"><PlayerAvatar :name="name(id)" :src="avatar(id)" class="w-6 h-6 text-[10px]" />{{ name(id) }} <span class="font-mono text-xs tabular-nums text-muted">{{ ratingLabel(id) }}</span></span>
               <button v-if="active && state.phase === 'picking' && seat === pickingCaptain(state)" class="btn-primary shrink-0" :disabled="pending" :aria-label="`Pick ${name(id)}`" @click="command({ kind: 'pick', userId: id })">Pick</button>
             </li>
           </ul>

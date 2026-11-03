@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PlayerAvatar from '../components/PlayerAvatar.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { Link2, Eye, ChevronRight } from 'lucide-vue-next';
@@ -57,7 +58,7 @@ const steamNotice = computed(() => {
         </div>
         <div class="min-w-0">
           <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted">{{ p.user.role }}</div>
-          <h1 class="text-3xl sm:text-4xl leading-none flex items-center gap-2 flex-wrap mt-1">{{ name }}<SimBadge v-if="p.user.isSimulated" /></h1>
+          <h1 class="text-3xl sm:text-4xl leading-none flex items-center gap-3 flex-wrap mt-1"><PlayerAvatar :name="name" :src="p.user.avatarUrl" class="w-12 h-12 text-xl" />{{ name }}<SimBadge v-if="p.user.isSimulated" /></h1>
           <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 font-mono text-[11px] uppercase tracking-wider text-muted">
             <span>Discord: <span class="text-text normal-case">{{ p.discord ? `@${p.discord.username}` : 'not linked' }}</span></span>
             <span>Steam: <span class="text-text normal-case">{{ p.steam ? p.steam.personaName ?? 'linked' : 'not linked' }}</span></span>

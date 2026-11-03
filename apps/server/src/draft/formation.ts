@@ -34,6 +34,25 @@ export function pickingCaptain(s: Formation): CaptainSeat | null {
 }
 function check(ok: unknown, message: string): asserts ok { if (!ok) throw Object.assign(new Error(message), { statusCode: 409 }); }
 
+export type CaptainMode = 'rated' | 'random';
+
+/** Shuffled first, so ties and uncalibrated players are not decided by who clicked Join first. */
+export function chooseCaptains(players: { id: string; rating: number | null }[], mode: CaptainMode, random = Math.random): [string, string] {
+  const pool = [...players];
+  for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); [pool[i], pool[j]] = [pool[j]!, pool[i]!]; }
+  if (mode === 'rated') pool.sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
+  return [pool[0]!.id, pool[1]!.id];
+}
+
+/** Seats a full sign-up and tosses, using the same commands a room runs by hand. */
+export function formFromSignup(prev: Formation, players: string[], captains: [string, string], size: number, toss: () => CaptainSeat): Formation {
+  const run = (s: Formation, cmd: FormationCommand, userId: string) => applyFormationCommand(s, cmd, userId, size, s.seq, toss);
+  let s = players.reduce((f, id) => run(f, { kind: 'join' }, id), prev);
+  s = run(s, { kind: 'captain', seat: 'a' }, captains[0]);
+  s = run(s, { kind: 'captain', seat: 'b' }, captains[1]);
+  return run(s, { kind: 'toss' }, captains[0]);
+}
+
 export type InviteRole = 'captainA' | 'captainB' | 'player';
 
 /** Applies an invite link. Reopening a link you already used changes nothing and returns the same object. */
