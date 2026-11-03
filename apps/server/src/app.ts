@@ -24,7 +24,7 @@ import { RedisSessionStore, MemorySessionStore, type SessionStore } from './auth
 import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
 import { steamLoginUrl, verifySteamAssertion } from './auth/steam.js';
-import { linkSteam } from './auth/linkSteam.js';
+import { applySteamName, fetchSteamName, linkSteam } from './auth/linkSteam.js';
 import { importKnownMatch, importMatch, previewMatchImport, recordLobbyResult } from './results/importMatch.js';
 import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
 import { normalizeReplay } from './tracker/replay.js';
@@ -184,6 +184,17 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   })().catch((e) => app.log.warn(`stats import failed: ${(e as Error).message}`)), 5 * 60_000);
   statsPoll.unref();
 
+  // Steam names change, and placeholders start without one, so refresh them all a few times a day, gently.
+  const steamNamePoll = setInterval(() => void (async () => {
+    const accounts = await db.steamAccount.findMany({ where: { user: { isSimulated: false } }, include: { user: { select: { displayName: true } } } });
+    for (const a of accounts) {
+      const name = await fetchSteamName(a.steamId64);
+      if (name && (name !== a.personaName || name !== a.user.displayName)) await applySteamName(db, a.userId, name);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  })().catch((e) => app.log.warn(`steam name refresh failed: ${(e as Error).message}`)), 6 * 3600_000);
+  steamNamePoll.unref();
+
   // Site-created lobbies finish on their own: once official data is published, the result is recorded. A running match has no winner yet, so it just waits.
   const resultTried = new Map<string, number>();
   const resultPoll = setInterval(() => void (async () => {
@@ -299,6 +310,8 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     if (!id64) return reply.redirect('/profile?steam=failed');
     const outcome = await linkSteam(db, req.user!.id, id64);
     if (outcome.status === 'taken') return reply.redirect('/profile?steam=taken');
+    const steamName = await fetchSteamName(id64);
+    if (steamName) await applySteamName(db, req.user!.id, steamName);
     await audit(db, req.user!.id, 'steam.link', 'User', req.user!.id, null, { steamId64: id64, claimedMatches: outcome.claimed });
     return reply.redirect(`/profile?steam=linked&claimed=${outcome.claimed}`);
   });
@@ -813,7 +826,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const activeSeason = seasonRows.find((x) => x.isActive);
     const table = activeSeason ? await seasonStandings(activeSeason.id) : [];
     const place = table.findIndex((r) => r.userId === id);
-    return { rank: place < 0 ? null : { position: place + 1, of: table.length }, heroes: heroSummary(scored), skill: { rating: shownRating(skill), matches: skill.matches, calibration: CALIBRATION_MATCHES }, user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
+    return { rank: place < 0 ? null : { position: place + 1, of: table.length }, heroes: heroSummary(scored), skill: { rating: shownRating(skill), matches: skill.matches, calibration: CALIBRATION_MATCHES }, user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId, personaName: u.steam.personaName }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
   });
   app.patch('/api/me/visibility', { preHandler: requireRole('SPECTATOR') }, async (req) => {
     const b = z.object({ visibility: z.enum(['PUBLIC', 'MEMBERS', 'PRIVATE']) }).parse(req.body);

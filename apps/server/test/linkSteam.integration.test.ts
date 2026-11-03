@@ -1,10 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { linkSteam } from '../src/auth/linkSteam.js';
+import { applySteamName, linkSteam, parseSteamName } from '../src/auth/linkSteam.js';
 
 // Runs only with TEST_DATABASE_URL (a disposable, migrated Postgres). The normal suite needs no database.
 const url = process.env.TEST_DATABASE_URL;
 const OFFSET = 76561197960265728n;
+describe('parseSteamName', () => {
+  it('reads the name, including symbols, and handles a missing profile', () => {
+    expect(parseSteamName('<profile><steamID><![CDATA[ <Rab> & co ]]></steamID></profile>')).toBe('<Rab> & co');
+    expect(parseSteamName('<response><error>not found</error></response>')).toBeNull();
+  });
+});
+
 describe.skipIf(!url)('linkSteam (Postgres)', () => {
   let db: PrismaClient;
   const run = Date.now() % 1_000_000;
@@ -46,5 +53,15 @@ describe.skipIf(!url)('linkSteam (Postgres)', () => {
     expect(await linkSteam(db, me.id, s.steamId64)).toEqual({ status: 'taken' });
     expect(await db.playerStatistic.count({ where: { resultId: r.id } })).toBe(2);
     expect(await db.user.findUnique({ where: { id: old.id } })).not.toBeNull();
+  });
+  it('uses the Steam name everywhere', async () => {
+    const u = await db.user.create({ data: { displayName: 'Old', steam: { create: { steamId64: String(76561198000000000n + BigInt(run % 1_000_000)), accountId: String(40000000 + run % 1_000_000) } } } });
+    const season = await db.season.create({ data: { name: `names ${run}` } });
+    const match = await db.match.create({ data: {} });
+    const result = await db.matchResult.create({ data: { matchId: match.id, seasonId: season.id, winner: 'AMBER', source: 'API' } });
+    await db.playerStatistic.create({ data: { resultId: result.id, userId: u.id, team: 'AMBER', won: true, displayNameSnapshot: 'Old' } });
+    await applySteamName(db, u.id, 'New');
+    expect((await db.user.findUniqueOrThrow({ where: { id: u.id }, include: { steam: true } }))).toMatchObject({ displayName: 'New', steam: { personaName: 'New' } });
+    expect(await db.playerStatistic.findFirst({ where: { userId: u.id } })).toMatchObject({ displayNameSnapshot: 'New' });
   });
 });

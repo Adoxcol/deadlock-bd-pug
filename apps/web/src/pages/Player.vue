@@ -59,8 +59,8 @@ const steamNotice = computed(() => {
           <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted">{{ p.user.role }}</div>
           <h1 class="text-3xl sm:text-4xl leading-none flex items-center gap-2 flex-wrap mt-1">{{ name }}<SimBadge v-if="p.user.isSimulated" /></h1>
           <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2 font-mono text-[11px] uppercase tracking-wider text-muted">
-            <span>Discord: <span class="text-text normal-case">{{ p.discord?.username ?? 'not linked' }}</span></span>
-            <span>Steam: <span class="text-text">{{ p.steam ? 'linked' : 'not linked' }}</span></span>
+            <span>Discord: <span class="text-text normal-case">{{ p.discord ? `@${p.discord.username}` : 'not linked' }}</span></span>
+            <span>Steam: <span class="text-text normal-case">{{ p.steam ? p.steam.personaName ?? 'linked' : 'not linked' }}</span></span>
           </div>
           <div v-if="recentForm.length" class="flex gap-1 mt-3" :aria-label="`Recent form: ${recentForm.map((w: boolean) => (w ? 'W' : 'L')).join(' ')}`">
             <span v-for="(w, i) in recentForm" :key="i" :class="['w-5 h-5 grid place-items-center font-mono text-[10px] font-bold', w ? 'bg-accent/20 text-accent' : 'bg-danger/20 text-danger']">{{ w ? 'W' : 'L' }}</span>
