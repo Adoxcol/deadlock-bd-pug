@@ -19,6 +19,11 @@ describe('normalizeMetadata', () => {
     expect(p.details.timeline).toHaveLength(2);
     expect(p.details.items).toEqual([{ t: 60, id: 100, soldAt: null }, { t: 900, id: 101, soldAt: 1200 }]);
   });
+  it('computes healing the way the in-game board does', () => {
+    // Lady Geist in match 129343601: the board shows 13k.
+    const geist = { match_info: { players: [{ account_id: 1, stats: [{ player_healing: 43271, player_barriering: 0, self_damage: 30536 }] }] } };
+    expect(normalizeMetadata(geist)!.players[0]!.details.healing).toBe(12735);
+  });
   it('keeps a real zero but leaves missing values null', () => {
     const d = normalizeMetadata(raw)!.players[0]!.details;
     expect(d.soulSources.treasure).toBe(0);

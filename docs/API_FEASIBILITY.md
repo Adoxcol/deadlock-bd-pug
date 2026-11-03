@@ -30,7 +30,7 @@ Tracking is reliable when either (a) the lobby is created through deadlock-api's
 | Party ID → Match ID | ⚠️ | `GET /v1/matches/custom/{party_id}/match-id` reads Redis `{party_id}:match-id` | none | 100/s per IP | Poll after start for API-created parties only; else manual |
 | Lobby ID → Match ID | ❌ | no endpoint | — | — | Manual Match ID entry |
 | Active match discovery | ⚠️ | `GET /v1/matches/active` — "watch tab, limited to **top 200 matches**"; filter by `account_id(s)` | none | default | Private customs are very unlikely to appear; use only as a best-effort search by linked Steam IDs |
-| Match metadata / final stats | ✅ (public matches) ⚠️ (private customs) | `GET /v1/matches/{match_id}/metadata` (`CMsgMatchMetaDataContents`) — requires salts to be known/ingested | none | default | Poll with backoff after match end; if 404 for N hours → "Match data pending" → moderator manual result |
+| Match metadata / final stats | ✅ (public matches, verified on lobby match 129343601) ⚠️ (private customs) | `GET /v1/matches/{match_id}/metadata` (`CMsgMatchMetaDataContents`) — requires salts to be known/ingested | none | default | Poll with backoff after match end; if 404 for N hours → "Match data pending" → moderator manual result |
 | Player match history | ✅ | `GET /v1/players/{account_id}/match-history` | none | default | Profile enrichment only |
 | Live broadcast URL | ✅ | `GET /v1/matches/{match_id}/live/url` returns broadcast URL + `lobby_id` | key optional | anon: 6/h per IP; key: 10/10min, 50/h | Never call per browser; one backend subscription |
 | Hero data/assets | ✅ | `GET /v1/assets/heroes` (assets API) | none | default | Seed hero roster; cache; portraits served by upstream CDN — check licence, fallback to initials |

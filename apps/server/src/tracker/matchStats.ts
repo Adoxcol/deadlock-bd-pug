@@ -22,6 +22,11 @@ const total = (o: Raw, ...keys: string[]): number | null => {
   return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
 };
 
+const boardHealing = (s: Raw): number | null => {
+  const gained = total(s, 'player_healing', 'player_barriering');
+  return gained === null ? null : Math.max(0, gained - (num(s.self_damage) ?? 0));
+};
+
 /** Reads GET /v1/matches/{id}/metadata. `stats` holds cumulative snapshots, so the last one is the final total. */
 export function normalizeMetadata(raw: unknown): NormalizedMatch | null {
   const info = obj(obj(raw).match_info);
@@ -38,7 +43,8 @@ export function normalizeMetadata(raw: unknown): NormalizedMatch | null {
         details: {
           level: num(p.level), lastHits: num(p.last_hits), denies: num(p.denies),
           playerDamage: num(last.player_damage), objectiveDamage: num(last.boss_damage), damageTaken: num(last.player_damage_taken), damageMitigated: num(last.damage_mitigated),
-          healing: num(last.player_healing), selfHealing: num(last.self_healing), teammateHealing: num(last.teammate_healing),
+          // The in-game Healing column is healing + barriers - self damage (all 12 players of match 129343601 agree).
+          healing: boardHealing(last), selfHealing: num(last.self_healing), teammateHealing: num(last.teammate_healing),
           shotsHit: num(last.shots_hit), shotsMissed: num(last.shots_missed), headshotKills: num(last.headshot_kills),
           bulletKills: num(last.bullet_kills), meleeKills: num(last.melee_kills), abilityKills: num(last.ability_kills),
           soulSources: {
