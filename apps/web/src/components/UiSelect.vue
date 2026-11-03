@@ -66,18 +66,18 @@ onBeforeUnmount(close);
 
 <template>
   <button v-bind="$attrs" :id="id" ref="btn" type="button" role="combobox" aria-haspopup="listbox" :aria-expanded="open" :disabled="disabled"
-    :class="['input flex items-center gap-2 text-left disabled:opacity-50 disabled:cursor-not-allowed', size === 'sm' && '!h-8 text-xs', open && '!border-primary/70']"
+    :class="['input flex items-center gap-2 text-left uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed', size === 'sm' && '!h-8 text-xs', open && '!border-primary/70']"
     @click="open ? close() : show()" @keydown="onKey">
     <span class="flex-1 truncate">{{ current?.label ?? '—' }}</span>
     <svg width="10" height="10" viewBox="0 0 12 12" :class="['shrink-0 text-primary transition-transform', open && 'rotate-180']"><path d="M6 9 1.5 3.5h9Z" fill="currentColor" /></svg>
   </button>
   <Teleport to="body">
     <ul v-if="open" ref="panel" role="listbox"
-      class="fixed z-[70] max-h-64 overflow-auto py-1 rounded border border-primary/50 bg-surface shadow-[0_18px_40px_-12px_rgba(0,0,0,.9),0_0_0_1px_rgba(0,0,0,.6)] animate-fade-up"
+      class="fixed z-[70] max-h-64 overflow-auto py-1 border border-primary/50 bg-surface shadow-[0_18px_40px_-12px_rgba(0,0,0,.9),0_0_0_1px_rgba(0,0,0,.6)] animate-fade-up"
       :style="{ left: pos.left + 'px', top: pos.top + 'px', minWidth: pos.width + 'px' }">
       <li v-for="(o, i) in options" :key="String(o.value)" role="option" :aria-selected="o.value === modelValue"
-        :class="['relative flex items-center gap-2 pl-7 pr-3 py-2 text-sm cursor-pointer whitespace-nowrap', i === active ? 'bg-primary/15 text-text' : 'text-text/85',
-          o.value === modelValue && 'text-primary font-semibold']"
+        :class="['relative flex items-center gap-2 pl-7 pr-3 py-2 font-display text-[13px] uppercase tracking-wider cursor-pointer whitespace-nowrap', i === active ? 'bg-primary/15 text-text' : 'text-text/85',
+          o.value === modelValue && 'text-primary']"
         @pointerenter="active = i" @click="choose(i)">
         <span v-if="i === active" class="absolute left-0 top-1 bottom-1 w-0.5 bg-primary" />
         <Check v-if="o.value === modelValue" class="absolute left-2 w-3.5 h-3.5" />{{ o.label }}

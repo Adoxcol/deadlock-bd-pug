@@ -27,7 +27,7 @@
   .btn-danger { @apply btn border border-danger/50 text-danger hover:bg-danger/10; }
   .btn-danger-solid { @apply btn rounded-none bg-danger text-text hover:bg-[#de5a4b] [clip-path:polygon(8px_0,100%_0,calc(100%-8px)_100%,0_100%)] px-5; }
   /* Fields: recessed dark slot with a brass underline that lights up on focus. */
-  .input { @apply h-10 w-full rounded bg-[#0a0806] border border-line border-b-primary/30 px-3 text-sm text-text placeholder:text-muted/70 shadow-[inset_0_2px_6px_rgba(0,0,0,.5)] transition-colors hover:border-primary/30 focus:outline-none focus:border-primary/70 focus:shadow-[inset_0_2px_6px_rgba(0,0,0,.5),0_0_0_3px_rgba(212,162,76,.15)]; }
+  .input { @apply h-10 w-full rounded-none bg-[#0a0806] border border-line border-b-2 border-b-primary/50 px-3 font-display text-[13px] tracking-wide text-text placeholder:text-muted/60 shadow-[inset_0_2px_6px_rgba(0,0,0,.5)] transition-colors hover:border-primary/30 focus:outline-none focus:border-primary/70 focus:shadow-[inset_0_2px_6px_rgba(0,0,0,.5),0_0_0_3px_rgba(212,162,76,.15)]; }
   select.input { @apply appearance-none pr-9 cursor-pointer truncate bg-no-repeat;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 9 1.5 3.5h9Z' fill='%23d4a24c'/%3E%3C/svg%3E");
     background-position: right .8rem center; background-size: 10px; }
