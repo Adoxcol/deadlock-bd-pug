@@ -18,10 +18,21 @@ export interface CreateLobbyOptions {
 }
 export interface CreatedLobby { partyId: string; partyCode: string; callbackSecret: string | null }
 
+export interface PlayerRank {
+  account_id: number; rank: number; subrank: number;
+  last_match: { start_time?: number; player_rank_final_flat_progress?: number | null } | null;
+}
+
+export interface PlayerProfile { account_id: number; avatarfull?: string | null }
+export interface PlayerHeroStat { account_id: number; hero_id: number; matches_played: number }
+
 export interface DeadlockApi {
   partyMatchId(partyId: string): Promise<ApiResult<{ matchId: string }>>;
   matchMetadata(matchId: string): Promise<ApiResult<unknown>>;
   createCustomLobby(opts: CreateLobbyOptions): Promise<ApiResult<CreatedLobby>>;
+  playerRanks(accountIds: string[]): Promise<ApiResult<PlayerRank[]>>;
+  playerProfiles(accountIds: string[]): Promise<ApiResult<PlayerProfile[]>>;
+  playerHeroStats(accountIds: string[]): Promise<ApiResult<PlayerHeroStat[]>>;
 }
 
 async function apiError(res: Response): Promise<string> {
@@ -60,6 +71,9 @@ export function createDeadlockApi(baseUrl: string, apiKey?: string, fetchImpl: t
       return r.ok ? { ok: true, data: { matchId: String(r.data.match_id) } } : r;
     },
     matchMetadata: (matchId) => get(`/v1/matches/${matchId}/metadata`),
+    playerRanks: (accountIds) => get(`/v1/players/rank?account_ids=${accountIds.join(',')}`, { timeoutMs: 30_000 }),
+    playerProfiles: (accountIds) => get(`/v1/players/steam?account_ids=${accountIds.join(',')}`, { timeoutMs: 30_000 }),
+    playerHeroStats: (accountIds) => get(`/v1/players/hero-stats?account_ids=${accountIds.join(',')}`, { timeoutMs: 30_000 }),
     async createCustomLobby(o) {
       // Creating the party waits for the in-game party code, so allow a longer timeout.
       const r = await get<{ party_id: string | number; party_code: string; callback_secret?: string | null }>('/v1/matches/custom/create', {

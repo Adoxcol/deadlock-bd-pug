@@ -30,6 +30,7 @@ import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
 import { normalizeReplay } from './tracker/replay.js';
 import { matchPlayers, normalizeMetadata, simulateDetails } from './tracker/matchStats.js';
 import { createDeadlockApi } from './tracker/deadlockApi.js';
+import { compareInGame, isInactive, RANK_NAMES, refreshInGameRanks } from './tracker/inGameRank.js';
 import { resolveIdentifier } from './tracker/resolve.js';
 import { LiveManager } from './live/ingestor.js';
 import { simulateMatch } from './sim/simulator.js';
@@ -199,6 +200,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     }
   })().catch((e) => app.log.warn(`steam name refresh failed: ${(e as Error).message}`)), 6 * 3600_000);
   steamNamePoll.unref();
+
+  const refreshRanks = () => void refreshInGameRanks(db, api).catch((e) => app.log.warn(`in-game rank refresh failed: ${(e as Error).message}`));
+  setTimeout(refreshRanks, 60_000).unref();
+  setInterval(refreshRanks, 30 * 60_000).unref();
 
   // Site-created lobbies finish on their own: once official data is published, the result is recorded. A running match has no winner yet, so it just waits.
   const resultTried = new Map<string, number>();
@@ -1089,6 +1094,14 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     return { season: { id: season.id, name: season.name, isSimulated: season.isSimulated }, rows: rows.map((r, i) => ({
       rank: i + 1, userId: r.userId, displayName: r.user.displayName, avatarUrl: r.user.avatarUrl, points: r.points, rating: shownRating(skill.get(r.userId)!), wins: r.wins, losses: r.losses, matches: r.matches,
       winRate: r.matches ? r.wins / r.matches : null, avg: sMap.get(r.userId) ?? null, mostPlayedHero: fav.get(r.userId) ? heroName(fav.get(r.userId)!.heroId) : null,
+    })) };
+  });
+  app.get('/api/leaderboard/in-game', async () => {
+    const accounts = await db.steamAccount.findMany({ where: { gameRank: { gt: 0 }, user: { isSimulated: false, visibility: { not: 'PRIVATE' } } }, include: { user: { select: { displayName: true, avatarUrl: true } } } });
+    return { rows: accounts.sort(compareInGame).slice(0, 200).map((a, i) => ({
+      position: i + 1, userId: a.userId, displayName: a.user.displayName, avatarUrl: a.user.avatarUrl,
+      rankName: RANK_NAMES[a.gameRank!] ?? 'Unknown', subrank: a.gameSubrank, points: a.gameRankPoints, lastRankedAt: a.lastRankedAt, inactive: isInactive(a.lastRankedAt), mostPlayedHero: a.gameTopHeroId ? heroName(a.gameTopHeroId) : null,
+      badgeUrl: `${cfg.DEADLOCK_API_URL}/v1/assets/ranks/${a.gameRank}/${a.gameSubrank}/image?format=webp`,
     })) };
   });
   app.get('/api/seasons', async () => db.season.findMany({ orderBy: { startsAt: 'desc' } }));

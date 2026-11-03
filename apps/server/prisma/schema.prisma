@@ -102,6 +102,14 @@ model SteamAccount {
   accountId   String   @unique // SteamID3 account id used by Deadlock API
   personaName String?
   avatarUrl   String?
+  /// In-game rank tier (1-11) and division (1-6) from deadlock-api. Null until a ranked match is seen.
+  gameRank       Int?
+  gameSubrank    Int?
+  gameRankPoints Int?
+  lastRankedAt   DateTime?
+  rankCheckedAt  DateTime?
+  /// Most played hero across their public matches.
+  gameTopHeroId  Int?
   linkedAt    DateTime @default(now())
 }
 

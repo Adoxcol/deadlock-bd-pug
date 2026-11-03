@@ -18,6 +18,15 @@ const error = ref<string | null>(null);
 const seasonId = ref('');
 const minMatches = ref(0);
 const hero = ref('');
+const tab = ref<'pug' | 'game'>('pug');
+const game = ref<any[] | null>(null);
+const gameError = ref<string | null>(null);
+async function loadGame() {
+  try { game.value = (await api<{ rows: any[] }>('/leaderboard/in-game')).rows; gameError.value = null; }
+  catch (e) { gameError.value = (e as Error).message; }
+}
+watch(tab, (t) => { if (t === 'game' && !game.value) loadGame(); });
+const shortDate = (d: string | null) => (d ? new Date(d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—');
 async function load() {
   try { data.value = await api(`/leaderboard?minMatches=${minMatches.value}${seasonId.value ? `&seasonId=${seasonId.value}` : ''}`); error.value = null; }
   catch (e) { error.value = (e as Error).message; }
@@ -39,6 +48,33 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
       <SimBadge v-if="data?.season?.isSimulated" />
     </PageHeader>
 
+    <div class="flex gap-5 border-b border-line">
+      <button v-for="t in ([['pug', 'PUG points'], ['game', 'In-game rank']] as const)" :key="t[0]" type="button" :aria-pressed="tab === t[0]"
+        :class="['font-display uppercase tracking-wider text-sm pb-2 -mb-px border-b-2 transition-colors', tab === t[0] ? 'border-primary text-text' : 'border-transparent text-muted hover:text-text']" @click="tab = t[0]">{{ t[1] }}</button>
+    </div>
+
+    <template v-if="tab === 'game'">
+      <p class="text-sm text-muted">Everyone who has linked Steam here, ordered by their rank in Deadlock. Link your Steam account to appear. Ranks refresh every few hours.</p>
+      <PageState :loading="!game && !gameError" :error="gameError" :empty="game?.length === 0" empty-text="No linked players have a rank yet.">
+        <div class="card-ornate overflow-x-auto">
+          <table class="w-full table-compact">
+            <thead><tr><th class="w-12">#</th><th>Player</th><th>Rank</th><th class="hidden md:table-cell">Most played</th><th class="text-right hidden sm:table-cell">Points</th><th class="text-right hidden sm:table-cell">Last ranked</th></tr></thead>
+            <tbody>
+              <tr v-for="r in game" :key="r.userId" :class="['hover:bg-raised/50', r.inactive && 'opacity-50']">
+                <td><span :class="['font-display text-lg tabular-nums', r.position === 1 ? 'text-primary' : r.position <= 3 ? 'text-text' : 'text-muted']">{{ r.position }}</span></td>
+                <td><RouterLink :to="`/players/${r.userId}`" class="font-semibold hover:text-primary inline-flex items-center gap-2 max-w-[6.5rem] sm:max-w-none"><PlayerAvatar :name="r.displayName" :src="r.avatarUrl" class="w-7 h-7 text-xs shrink-0" /><span class="truncate">{{ r.displayName }}</span></RouterLink></td>
+                <td><div class="flex items-center gap-2"><img :src="r.badgeUrl" alt="" class="w-8 h-8 object-contain" loading="lazy" /><div><div class="font-display uppercase text-[13px] sm:text-sm leading-tight">{{ r.rankName }} {{ r.subrank }}</div><div class="sm:hidden font-mono text-[11px] tabular-nums text-muted">{{ r.points?.toLocaleString() ?? '—' }}</div></div></div></td>
+                <td class="hidden md:table-cell"><div v-if="r.mostPlayedHero" class="flex items-center gap-2"><HeroCard size="xs" :name="r.mostPlayedHero" :src="heroByName(r.mostPlayedHero)?.imageUrl" />{{ r.mostPlayedHero }}</div><span v-else class="text-muted">—</span></td>
+                <td class="hidden sm:table-cell text-right font-display text-base tabular-nums">{{ r.points?.toLocaleString() ?? '—' }}</td>
+                <td class="text-right hidden sm:table-cell font-mono text-xs">{{ r.inactive ? 'Inactive' : shortDate(r.lastRankedAt) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </PageState>
+    </template>
+
+    <template v-else>
     <div class="flex flex-wrap gap-2">
       <UiSelect v-model="seasonId" class="!w-56" aria-label="Season" :options="seasonOptions" />
       <UiSelect v-model="minMatches" class="!w-44" aria-label="Minimum matches" :options="[{ value: 0, label: 'Any matches' }, { value: 5, label: '5+ matches' }, { value: 10, label: '10+ matches' }]" />
@@ -91,5 +127,6 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
       <p class="text-xs text-muted">A match never costs you points, and only verified results count. The lower-rated team earns +1 per 10 rating of average gap, or half that if it loses.</p>
       <p class="text-xs text-muted">Rating is your average points per match ×20, without bonuses. Your first 5 rated matches calibrate it, then your rating is revealed. It is separate from your in-game Deadlock rank.</p>
     </section>
+    </template>
   </div>
 </template>
