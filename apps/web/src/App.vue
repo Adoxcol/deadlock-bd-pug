@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { LayoutDashboard, Swords, Crosshair, Trophy, Shield, LogOut, Wifi, WifiOff, Radio, Plus, MessageCircle } from 'lucide-vue-next';
 import { useSession } from './stores/session';
 import { realtime } from './lib/ws';
+import { takeReturn } from './lib/returnTo';
 import Logo from './components/Logo.vue';
 
 const session = useSession();
 const route = useRoute();
+const router = useRouter();
+// Discord login lands back on the home page, so this runs on the first load after it.
+watch(() => session.loaded, (loaded) => {
+  if (!loaded || !session.user) return;
+  const path = takeReturn();
+  if (path) void router.replace(path);
+}, { immediate: true });
 const navEl = ref<HTMLElement | null>(null);
 // Keep the current page's ticket in view on the swipeable phone row.
 watch(() => route.path, () => nextTick(() => navEl.value?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })));

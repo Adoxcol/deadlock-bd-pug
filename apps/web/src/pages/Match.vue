@@ -4,9 +4,10 @@ import { BadgeCheck, FlaskConical, Hourglass, Radio, Trophy } from 'lucide-vue-n
 import { api } from '../lib/api';
 import { duration, dateShort } from '../lib/format';
 import { useHeroes } from '../stores/heroes';
+import { useItems } from '../stores/items';
 import { useSession } from '../stores/session';
 import HeroCard from '../components/HeroCard.vue';
-import Metric from '../components/Metric.vue';
+import Scoreboard from '../components/match/Scoreboard.vue';
 import PageState from '../components/PageState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import StatusBadge from '../components/StatusBadge.vue';
@@ -16,6 +17,7 @@ import TeamCrest from '../components/draft/TeamCrest.vue';
 type Side = 'AMBER' | 'SAPPHIRE';
 const props = defineProps<{ matchId: string }>();
 const heroes = useHeroes();
+const items = useItems();
 const session = useSession();
 const m = ref<any>(null);
 const error = ref<string | null>(null);
@@ -28,7 +30,7 @@ async function load() {
   try { m.value = await api(`/matches/${props.matchId}`); if (m.value.pugId) pug.value = await api(`/pugs/${m.value.pugId}`); }
   catch (e) { error.value = (e as Error).message; }
 }
-onMounted(() => { heroes.load().catch(() => {}); load(); });
+onMounted(() => { heroes.load().catch(() => {}); items.load().catch(() => {}); load(); });
 
 const lower = (side: Side) => (side === 'AMBER' ? 'amber' : 'sapphire') as 'amber' | 'sapphire';
 const teamName = (side: Side) => m.value?.draft?.teamNames?.[lower(side)] ?? m.value?.pug?.teams?.find((t: any) => t.side === side)?.name ?? (side === 'AMBER' ? 'Team Amber' : 'Team Sapphire');
@@ -48,6 +50,18 @@ function roster(side: Side): string[] {
 }
 const canSubmit = computed(() => session.can('MODERATOR') && !m.value?.result && roster('AMBER').length > 0 && roster('SAPPHIRE').length > 0);
 const draftHeroes = (side: Side): number[] => m.value?.draft?.state?.picks?.[lower(side)] ?? [];
+
+const hasDetails = computed(() => (m.value?.result?.stats ?? []).some((s: any) => s.details));
+const importing = ref(false);
+const importMsg = ref<string | null>(null);
+async function importStats() {
+  importing.value = true; importMsg.value = null;
+  try {
+    const r = await api<any>(`/matches/${props.matchId}/stats/import`, { method: 'POST', body: {} });
+    importMsg.value = r.status === 'imported' ? `Stats imported for ${r.players} players.` : r.message;
+    await load();
+  } catch (e) { importMsg.value = (e as Error).message; } finally { importing.value = false; }
+}
 
 async function submit() {
   busy.value = true; submitMsg.value = null;
@@ -93,20 +107,13 @@ async function submit() {
       <div v-else class="card px-4 py-3 flex items-center gap-2 text-sm text-muted"><Hourglass class="w-4 h-4 shrink-0" />Match data pending. Final statistics for private custom matches may not be published; a moderator can submit the result below.</div>
 
       <!-- Scoreboards -->
-      <div v-if="m.result" class="grid xl:grid-cols-2 gap-4">
-        <section v-for="side in (['AMBER', 'SAPPHIRE'] as const)" :key="side" :class="['card-ornate overflow-hidden border-t-2', side === 'AMBER' ? '!border-t-amber-team' : '!border-t-sapphire-team']">
-          <h2 :class="['px-4 pt-3 pb-2 flex items-center gap-2 text-lg', side === 'AMBER' ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(side) }}<Trophy v-if="m.result.winner === side" class="w-4 h-4 text-primary" /></h2>
-          <div class="overflow-x-auto"><table class="w-full table-compact">
-            <thead><tr><th>Player</th><th class="text-right">K</th><th class="text-right">D</th><th class="text-right">A</th><th class="text-right">Net worth</th><th class="text-right">Hero dmg</th></tr></thead>
-            <tbody><tr v-for="st in stats(side)" :key="st.id" class="hover:bg-raised/50">
-              <td><RouterLink v-if="st.userId" :to="`/players/${st.userId}`" class="flex items-center gap-2.5 hover:text-primary">
-                <HeroCard size="xs" :name="heroes.byId(st.heroId)?.name ?? '?'" :src="heroes.byId(st.heroId)?.imageUrl" />
-                <span class="min-w-0"><span class="block truncate max-w-[160px] font-semibold">{{ st.displayNameSnapshot }}</span><span class="block font-mono text-[10px] uppercase tracking-wider text-muted">{{ heroes.byId(st.heroId)?.name ?? 'Unknown hero' }}</span></span>
-              </RouterLink></td>
-              <td class="text-right"><Metric :value="st.kills" /></td><td class="text-right"><Metric :value="st.deaths" /></td><td class="text-right"><Metric :value="st.assists" /></td><td class="text-right"><Metric :value="st.netWorth" /></td><td class="text-right"><Metric :value="st.heroDamage" /></td>
-            </tr></tbody>
-          </table></div>
-        </section>
+      <div v-if="m.result" class="space-y-4">
+        <div v-if="!hasDetails" class="card px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-sm text-muted">
+          <span class="flex items-center gap-2"><Hourglass class="w-4 h-4 shrink-0" />Detailed stats not published for this match.</span>
+          <button v-if="session.can('MODERATOR') && m.deadlockMatchId" type="button" class="btn-ghost !h-9" :disabled="importing" @click="importStats">Check for stats</button>
+          <p v-if="importMsg" class="w-full" role="status">{{ importMsg }}</p>
+        </div>
+        <Scoreboard v-for="side in (['AMBER', 'SAPPHIRE'] as const)" :key="side" :team="lower(side)" :name="teamName(side)" :won="m.result.winner === side" :stats="stats(side)" />
       </div>
 
       <!-- Draft summary when there is no result yet -->

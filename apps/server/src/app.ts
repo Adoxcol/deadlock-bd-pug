@@ -7,13 +7,13 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes, randomUUID, randomInt } from 'node:crypto';
 import { z } from 'zod';
-import { PrismaClient, type User, type Prisma } from '@prisma/client';
+import { Prisma, PrismaClient, type User } from '@prisma/client';
 import { Redis } from 'ioredis';
 import type { Config } from './config.js';
 import { Hub } from './realtime/hub.js';
 import { DraftService, generateRoomCode } from './draft/service.js';
 import { DraftError, TEAM_SIZE, applyFormationCommand, createDraftState, buildDefaultSequence } from './draft/engine.js';
-import { newFormation, type Formation } from './draft/formation.js';
+import { applyInvite, defaultTeamName, newFormation, type Formation, type InviteRole } from './draft/formation.js';
 import { RedisLock, MemoryLock, LockBusyError } from './draft/lock.js';
 import { PrismaDraftStore, syncHeroes } from './db/draftStore.js';
 import { PrismaResultsRepo } from './db/resultsRepo.js';
@@ -24,6 +24,7 @@ import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
 import { steamLoginUrl, verifySteamAssertion, steam64ToAccountId } from './auth/steam.js';
 import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
+import { matchPlayers, normalizeMetadata, simulateDetails } from './tracker/matchStats.js';
 import { createDeadlockApi } from './tracker/deadlockApi.js';
 import { resolveIdentifier } from './tracker/resolve.js';
 import { LiveManager } from './live/ingestor.js';
@@ -85,6 +86,17 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   });
   await drafts.restore();
 
+  // ---------- Items ----------
+  let items: { id: number; name: string; imageUrl: string | null; slot: string | null; tier: number | null; cost: number | null }[] = [];
+  async function loadItems() {
+    const res = await fetch(`${cfg.DEADLOCK_API_URL}/v1/assets/items/by-type/upgrade`, { signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) throw new Error(`Item assets returned ${res.status}`);
+    const raw = (await res.json()) as Array<{ id: number; name: string; image_webp?: string | null; image?: string | null; shop_image_webp?: string | null; shop_image?: string | null; item_slot_type?: string | null; item_tier?: number | null; cost?: number | null; shopable?: boolean }>;
+    items = raw.filter((i) => i.shopable).map((i) => ({ id: i.id, name: i.name, imageUrl: i.shop_image_webp ?? i.shop_image ?? i.image_webp ?? i.image ?? null, slot: i.item_slot_type ?? null, tier: i.item_tier ?? null, cost: i.cost ?? null }));
+  }
+  const scheduleItemLoad = (): void => { loadItems().then(() => void setTimeout(scheduleItemLoad, 24 * 3600_000).unref()).catch((e) => { app.log.warn(`item assets unavailable: ${(e as Error).message}`); setTimeout(scheduleItemLoad, 10 * 60_000).unref(); }); };
+  scheduleItemLoad();
+
   // ---------- Live ----------
   const live = new LiveManager(hub, cfg.LIVE_EVENTS_URL, cfg.PUBLIC_LIVE_DELAY_SEC, (id, s) => {
     void db.match.update({ where: { id }, data: { trackingState: s.simulated ? 'MATCH_COMPLETED' : 'MATCH_DATA_PENDING', endedAt: new Date(), durationSec: s.gameTime ? Math.round(s.gameTime) : null } }).catch(() => {});
@@ -124,6 +136,36 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   }
   const lobbies = new LobbyService(db, api, { publicUrl: cfg.PUBLIC_URL, region: cfg.DEADLOCK_LOBBY_REGION, log: app.log }, onMatchStarted);
   lobbies.start();
+
+  /** Fills a result's stat rows from final metadata. Never creates a result, so ratings stay a moderator's decision. */
+  async function importMatchStats(matchRowId: string): Promise<{ status: 'imported'; players: number } | { status: 'unpublished' | 'rate_limited' | 'unavailable'; message: string }> {
+    const m = await db.match.findUnique({ where: { id: matchRowId }, include: { result: { include: { stats: true } } } });
+    if (!m?.deadlockMatchId || !m.result) return { status: 'unavailable', message: 'This match has no Match ID or result yet.' };
+    const r = await api.matchMetadata(m.deadlockMatchId);
+    if (!r.ok) return r.status === 'not_found' ? { status: 'unpublished', message: 'Detailed stats are not published for this match yet.' } : { status: r.status, message: r.message };
+    const meta = normalizeMetadata(r.data);
+    if (!meta) return { status: 'unpublished', message: 'The published match data has no player stats.' };
+    const steam = await db.steamAccount.findMany({ where: { userId: { in: m.result.stats.flatMap((s) => s.userId ?? []) } } });
+    const paired = matchPlayers(m.result.stats, new Map(steam.map((s) => [s.userId, s.accountId])), meta.players);
+    await db.$transaction(paired.map(({ row, player: p }) => db.playerStatistic.update({ where: { id: row.id }, data: {
+      heroId: p.heroId ?? row.heroId, kills: p.kills ?? row.kills, deaths: p.deaths ?? row.deaths, assists: p.assists ?? row.assists,
+      netWorth: p.netWorth ?? row.netWorth, heroDamage: p.heroDamage ?? row.heroDamage, details: p.details as unknown as Prisma.InputJsonValue,
+    } })));
+    if (meta.durationSec !== null) await db.match.update({ where: { id: m.id }, data: { durationSec: meta.durationSec } });
+    hub.publish('dashboard', 'match.updated', { id: m.id });
+    return { status: 'imported', players: paired.length };
+  }
+  // Metadata can appear well after a match ends. Fresh metadata costs a scarce Steam request, so check a few at a time.
+  const statsTried = new Map<string, number>();
+  const statsPoll = setInterval(() => void (async () => {
+    const now = Date.now();
+    const rows = await db.matchResult.findMany({ where: { createdAt: { gt: new Date(now - 48 * 3600_000) }, match: { deadlockMatchId: { not: null }, isSimulated: false }, stats: { some: { details: { equals: Prisma.DbNull } } } }, select: { matchId: true }, take: 20 });
+    for (const { matchId } of rows.filter((x) => now - (statsTried.get(x.matchId) ?? 0) > 30 * 60_000).slice(0, 3)) {
+      statsTried.set(matchId, now);
+      if ((await importMatchStats(matchId)).status === 'rate_limited') break;
+    }
+  })().catch((e) => app.log.warn(`stats import failed: ${(e as Error).message}`)), 5 * 60_000);
+  statsPoll.unref();
 
   // ---------- Plugins ----------
   await app.register(cookie, { secret: cfg.SESSION_SECRET });
@@ -237,6 +279,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
 
   // ---------- Heroes / Dashboard ----------
   app.get('/api/heroes', async () => ({ source: heroSource, heroes }));
+  app.get('/api/items', async () => ({ items }));
 
   app.get('/api/dashboard', async () => {
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
@@ -255,7 +298,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     return {
       stats: { pugsPlayed, activePugs: activePugs.length, playersDrafting: drafting.reduce((n, d) => n + TEAM_SIZE[d.state.config.format] * 2, 0), matchesLive: liveMatches, completedToday, members },
       sessions: activePugs.map((p) => ({
-        id: p.id, number: p.number, status: p.status, players: p.participants.length, format: p.format, isSimulated: p.isSimulated,
+        id: p.id, number: p.number, name: p.name, status: p.status, players: p.participants.length, format: p.format, isSimulated: p.isSimulated,
         teams: Object.fromEntries(p.teams.map((t) => [t.side.toLowerCase(), t.name])), createdAt: p.createdAt,
         draft: p.draftRooms[0] ? { id: p.draftRooms[0].id, status: p.draftRooms[0].status } : null,
         match: p.matches[0] ? { id: p.matches[0].id, state: p.matches[0].trackingState } : null,
@@ -268,13 +311,20 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   });
 
   // ---------- PUGs ----------
+  const lobbyRules = z.object({
+    bansPerTeam: z.number().int().min(0).max(6), timerSeconds: z.union([z.literal(0), z.literal(30), z.literal(45), z.literal(60), z.literal(90)]), timeoutBehavior: z.enum(['skip', 'random', 'pause']),
+    banPhases: z.union([z.literal(1), z.literal(2)]), allowMirrorPicks: z.boolean(), visibility: z.enum(['public', 'private']),
+  });
+  const defaultRules: z.infer<typeof lobbyRules> = { bansPerTeam: 2, timerSeconds: 30, timeoutBehavior: 'skip', banPhases: 2, allowMirrorPicks: false, visibility: 'public' };
   const createPugBody = z.object({
     format: z.enum(['6v6', '4v4', '2v2']).default('6v6'), draftProvider: z.enum(['NATIVE', 'DEADLOCKLABS', 'EXTERNAL']).default('NATIVE'),
     amberName: z.string().min(1).max(32).default('Team Amber'), sapphireName: z.string().min(1).max(32).default('Team Sapphire'),
     externalUrl: z.string().url().optional(),
+    name: z.string().trim().max(48).optional(),
   });
   async function createPug(userId: string, body: z.infer<typeof createPugBody>, simulated = false, formTeams = true) {
-    const pug = await db.pugSession.create({ data: { format: body.format, draftProvider: body.draftProvider, createdById: userId, isSimulated: simulated, ...(formTeams && body.draftProvider === 'NATIVE' ? { formation: newFormation() as unknown as Prisma.InputJsonValue } : {}), teams: { create: [{ side: 'AMBER', name: body.amberName }, { side: 'SAPPHIRE', name: body.sapphireName }] } } });
+    const invited = formTeams && body.draftProvider === 'NATIVE';
+    const pug = await db.pugSession.create({ data: { name: body.name || null, ...(invited ? { settings: defaultRules, code: generateRoomCode(), invites: { create: (['captainA', 'captainB', 'player'] as const).map((role) => ({ role, token: randomBytes(16).toString('hex') })) } } : {}), format: body.format, draftProvider: body.draftProvider, createdById: userId, isSimulated: simulated, ...(formTeams && body.draftProvider === 'NATIVE' ? { formation: newFormation() as unknown as Prisma.InputJsonValue } : {}), teams: { create: [{ side: 'AMBER', name: body.amberName }, { side: 'SAPPHIRE', name: body.sapphireName }] } } });
     if (body.externalUrl && body.draftProvider !== 'NATIVE') {
       const p = providers[body.draftProvider === 'DEADLOCKLABS' ? 'deadlocklabs' : 'external'];
       if (!p.validateUrl!(body.externalUrl)) throw Object.assign(new Error(`URL is not a valid ${p.displayName} link`), { statusCode: 400 });
@@ -285,15 +335,42 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     hub.publish('dashboard', 'pug.created', { id: pug.id });
     return pug;
   }
-  app.post('/api/pugs', { preHandler: requireRole('MODERATOR') }, async (req) => createPug(req.user!.id, createPugBody.parse(req.body), req.user!.isSimulated));
+  app.post('/api/pugs', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req) => {
+    const body = createPugBody.parse(req.body);
+    if (body.draftProvider !== 'NATIVE' && !isMod(req.user)) throw Object.assign(new Error('Only moderators can link external drafts.'), { statusCode: 403 });
+    return createPug(req.user!.id, body, req.user!.isSimulated);
+  });
   app.get('/api/pugs/:id', async (req) => {
     const { id } = req.params as { id: string };
-    const p = await db.pugSession.findUnique({ where: { id }, include: { teams: true, participants: { include: { user: true } }, draftRooms: true, externalDrafts: true, matches: true } });
+    const { k } = req.query as { k?: string };
+    const p = await db.pugSession.findUnique({ where: /^[A-Za-z0-9]{6}$/.test(id) ? { code: id.toUpperCase() } : { id }, include: { invites: true, teams: true, participants: { include: { user: true } }, draftRooms: true, externalDrafts: true, matches: true } });
     if (!p) throw Object.assign(new Error('PUG not found'), { statusCode: 404 });
+    const { invites, ...pug } = p;
+    const canManage = !!req.user && (req.user.id === p.createdById || isMod(req.user));
     return {
-      ...p, participants: p.participants.map((x) => ({ ...x, user: publicUser(x.user) })), matches: p.matches.map(publicMatch),
+      ...pug,
+      // Only the host gets the links. A visitor learns just what their own link grants.
+      invites: canManage && invites.length ? Object.fromEntries(invites.map((i) => [i.role, i.token])) : null,
+      inviteRole: invites.find((i) => i.token === k)?.role ?? null,
+      participants: p.participants.map((x) => ({ ...x, user: publicUser(x.user) })), matches: p.matches.map(publicMatch),
       draftRooms: p.draftRooms.map((d) => ({ id: d.id, code: d.code, name: d.name, status: d.status, createdAt: d.createdAt })),
     };
+  });
+  app.patch('/api/pugs/:id', { preHandler: requireRole('PLAYER') }, async (req) => {
+    const { id } = req.params as { id: string };
+    const b = z.object({ name: z.string().trim().max(48), format: z.enum(['6v6', '4v4', '2v2']), settings: lobbyRules }).parse(req.body);
+    return formationLock.withLock(`pug:${id}`, async () => {
+      const pug = await db.pugSession.findUniqueOrThrow({ where: { id } });
+      if (req.user!.id !== pug.createdById && !isMod(req.user)) throw Object.assign(new Error('Only the host can change this lobby.'), { statusCode: 403 });
+      const form = pug.formation as unknown as Formation | null;
+      if (!pug.code || !form || form.phase !== 'waiting') throw Object.assign(new Error('Lobby settings are locked after the toss.'), { statusCode: 409 });
+      const size = TEAM_SIZE[b.format];
+      if (form.players.length > size * 2 || form.teams.a.length > size || form.teams.b.length > size) throw Object.assign(new Error(`Too many players for ${b.format}.`), { statusCode: 409 });
+      const updated = await db.pugSession.update({ where: { id }, data: { name: b.name || null, format: b.format, settings: b.settings } });
+      await audit(db, req.user!.id, 'pug.settings', 'PugSession', id, null, b);
+      hub.publish('dashboard', 'pug.updated', { id });
+      return { id: updated.id };
+    });
   });
   app.post('/api/pugs/:id/participants', { preHandler: requireRole('MODERATOR') }, async (req) => {
     const { id } = req.params as { id: string };
@@ -310,22 +387,26 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       z.object({ kind: z.literal('join') }), z.object({ kind: z.literal('leave') }), z.object({ kind: z.literal('toss') }),
       z.object({ kind: z.literal('captain'), seat: z.enum(['a', 'b']) }),
       z.object({ kind: z.literal('team'), seat: z.enum(['a', 'b']).nullable() }),
-      z.object({ kind: z.literal('choice'), advantage: z.enum(['first', 'side']) }),
+      z.object({ kind: z.literal('choice'), advantage: z.enum(['first', 'side']), side: z.enum(['amber', 'sapphire']).optional() }),
+      z.object({ kind: z.literal('teamName'), name: z.string().trim().max(32) }),
       z.object({ kind: z.literal('side'), side: z.enum(['amber', 'sapphire']) }),
       z.object({ kind: z.literal('pick'), userId: z.string() }),
       z.object({ kind: z.literal('skip'), agree: z.boolean() }),
     ]),
   });
   const formationLock = redis ? new RedisLock(redis) : new MemoryLock();
-  app.post('/api/pugs/:id/formation', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 30, timeWindow: '10 seconds' } } }, async (req) => {
-    const { id } = req.params as { id: string };
-    const { command, expectedSeq } = formationBody.parse(req.body);
+  type PugWithTeams = Prisma.PugSessionGetPayload<{ include: { teams: true } }>;
+  /** Everything that changes a room goes through here: lock, compare-and-swap, participants, and the draft handoff. */
+  async function changeFormation(id: string, actor: { id: string; isSimulated: boolean }, step: (current: Formation, size: number, pug: PugWithTeams, tx: Prisma.TransactionClient) => Formation | Promise<Formation>) {
     const result = await formationLock.withLock(`pug:${id}`, () => db.$transaction(async (tx) => {
       const pug = await tx.pugSession.findUniqueOrThrow({ where: { id }, include: { teams: true } });
       if (!pug.formation || pug.status !== 'WAITING') throw Object.assign(new Error('This PUG is not accepting team selection.'), { statusCode: 409 });
-      if (pug.isSimulated !== req.user!.isSimulated) throw Object.assign(new Error('Simulated and real players cannot share a PUG.'), { statusCode: 409 });
+      if (pug.isSimulated !== actor.isSimulated) throw Object.assign(new Error('Simulated and real players cannot share a PUG.'), { statusCode: 409 });
       const size = TEAM_SIZE[pug.format as keyof typeof TEAM_SIZE];
-      const next = applyFormationCommand(pug.formation as unknown as Formation, command, req.user!.id, size, expectedSeq, () => randomInt(2) === 0 ? 'a' : 'b');
+      const current = pug.formation as unknown as Formation;
+      const next = await step(current, size, pug, tx);
+      if (next === current) return current;
+      const expectedSeq = current.seq;
       // The compare-and-swap also protects across processes if a Redis lock expires.
       const updated = await tx.pugSession.updateMany({ where: { id, formationSeq: expectedSeq, status: 'WAITING' }, data: { formationSeq: next.seq } });
       if (updated.count !== 1) throw Object.assign(new Error('Room changed. Refresh and try again.'), { statusCode: 409 });
@@ -340,23 +421,47 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
         next.draftId = randomUUID();
         const captains: Record<TeamSide, string | null> = { amber: null, sapphire: null };
         for (const t of ['a', 'b'] as const) captains[next.sides[t]] = next.captains[t];
-        // Hero order remains a separate rule: Amber starts, regardless of first player pick.
-        const state = createDraftState({ format: pug.format as keyof typeof TEAM_SIZE, bansPerTeam: 2, timerSeconds: 30, timeoutBehavior: 'skip', allowMirrorPicks: false, sequence: buildDefaultSequence(pug.format as keyof typeof TEAM_SIZE, 2, 'amber', pug.format === '6v6' ? 2 : 1) }, captains);
+        const rules = (pug.settings ?? { ...defaultRules, banPhases: pug.format === '6v6' ? 2 : 1 }) as z.infer<typeof lobbyRules>;
+        // In an invite lobby the toss's first pick also leads the hero draft. Older rooms keep Amber first.
+        const firstTeam = pug.code && next.first ? next.sides[next.first] : 'amber';
+        const teamNames = { amber: pug.teams.find((t) => t.side === 'AMBER')!.name, sapphire: pug.teams.find((t) => t.side === 'SAPPHIRE')!.name };
+        if (pug.code) for (const t of ['a', 'b'] as const) {
+          teamNames[next.sides[t]] = next.teamNames?.[t] ?? defaultTeamName(users.find((u) => u.id === next.captains[t])!.displayName);
+          await tx.team.updateMany({ where: { pugId: id, side: toSide(next.sides[t]) }, data: { name: teamNames[next.sides[t]] } });
+        }
+        const state = createDraftState({ format: pug.format as keyof typeof TEAM_SIZE, bansPerTeam: rules.bansPerTeam, timerSeconds: rules.timerSeconds, timeoutBehavior: rules.timeoutBehavior, allowMirrorPicks: rules.allowMirrorPicks, sequence: buildDefaultSequence(pug.format as keyof typeof TEAM_SIZE, rules.bansPerTeam, firstTeam, rules.banPhases) }, captains);
         state.rosterLocked = true;
         for (const t of ['a', 'b'] as const) state.members[next.sides[t]] = next.teams[t].filter((uid) => uid !== next.captains[t]);
         await tx.draftRoom.create({ data: {
-          id: next.draftId, code: generateRoomCode(), pugId: id, name: `${pug.isSimulated ? '[SIM] ' : ''}PUG #${pug.number} hero draft`,
-          amberName: pug.teams.find((t) => t.side === 'AMBER')!.name, sapphireName: pug.teams.find((t) => t.side === 'SAPPHIRE')!.name,
-          isSimulated: pug.isSimulated, createdById: req.user!.id, config: state.config as unknown as Prisma.InputJsonValue, state: state as unknown as Prisma.InputJsonValue,
+          id: next.draftId, code: generateRoomCode(), pugId: id, name: `${pug.isSimulated ? '[SIM] ' : ''}${pug.name ?? `PUG #${pug.number}`} hero draft`, visibility: rules.visibility,
+          amberName: teamNames.amber, sapphireName: teamNames.sapphire,
+          isSimulated: pug.isSimulated, createdById: actor.id, config: state.config as unknown as Prisma.InputJsonValue, state: state as unknown as Prisma.InputJsonValue,
           participants: { create: participants.map((p) => ({ ...p, displayNameSnapshot: users.find((u) => u.id === p.userId)!.displayName })) },
         } });
       }
       await tx.pugSession.update({ where: { id }, data: { formation: next as unknown as Prisma.InputJsonValue } });
-      await tx.auditLog.create({ data: { actorId: req.user!.id, action: `pug.${command.kind}`, entityType: 'PugSession', entityId: id, before: pug.formation as Prisma.InputJsonValue, after: next as unknown as Prisma.InputJsonValue } });
+      await tx.auditLog.create({ data: { actorId: actor.id, action: 'pug.formation', entityType: 'PugSession', entityId: id, before: pug.formation as Prisma.InputJsonValue, after: next as unknown as Prisma.InputJsonValue } });
       return next;
     }));
     hub.publish('dashboard', 'pug.updated', { id });
     return result;
+  }
+  const toss = () => (randomInt(2) === 0 ? 'a' : 'b') as 'a' | 'b';
+  app.post('/api/pugs/:id/formation', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 30, timeWindow: '10 seconds' } } }, async (req) => {
+    const { command, expectedSeq } = formationBody.parse(req.body);
+    return changeFormation((req.params as { id: string }).id, req.user!, (current, size, pug) => {
+      if (pug.code && (command.kind === 'join' || command.kind === 'captain')) throw Object.assign(new Error('Use an invite link to join this lobby.'), { statusCode: 403 });
+      return applyFormationCommand(current, command, req.user!.id, size, expectedSeq, toss);
+    });
+  });
+  app.post('/api/pugs/:id/invite', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 30, timeWindow: '10 seconds' } } }, async (req) => {
+    const { id } = req.params as { id: string };
+    const { token } = z.object({ token: z.string().min(1).max(64) }).parse(req.body);
+    return changeFormation(id, req.user!, async (current, size, _pug, tx) => {
+      const invite = await tx.pugInvite.findFirst({ where: { token, pugId: id } });
+      if (!invite) throw Object.assign(new Error('This invite link is not valid.'), { statusCode: 403 });
+      return applyInvite(current, invite.role as InviteRole, req.user!.id, size);
+    });
   });
   app.post('/api/pugs/:id/cancel', { preHandler: requireRole('MODERATOR') }, async (req) => {
     const { id } = req.params as { id: string };
@@ -414,7 +519,11 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   app.get('/api/drafts/code/:code', async (req) => {
     const code = z.string().regex(/^[A-Za-z0-9]{6}$/).parse((req.params as { code: string }).code).toUpperCase();
     const rec = await store.getByCode(code);
-    if (!rec) throw Object.assign(new Error('No draft room with that code'), { statusCode: 404 });
+    if (!rec) {
+      const pug = await db.pugSession.findUnique({ where: { code }, select: { id: true } });
+      if (pug) return { pugId: pug.id, code };
+      throw Object.assign(new Error('No room with that code'), { statusCode: 404 });
+    }
     return { id: rec.id, code: rec.code };
   });
   /** Display names for everyone referenced by the draft (captains, players, assignment targets). */
@@ -563,6 +672,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
         return { resultId: result.id, userId: u.id, team: toSide(team), won: team === b.winner, displayNameSnapshot: u.displayName, heroId: lp?.heroId ?? assigned.get(u.id) ?? null, kills: lp?.kills ?? null, deaths: lp?.deaths ?? null, assists: lp?.assists ?? null, netWorth: lp?.netWorth ?? null, heroDamage: lp?.heroDamage ?? null };
       }), skipDuplicates: true });
       await db.match.update({ where: { id }, data: { trackingState: 'MATCH_COMPLETED' } });
+      if (m.deadlockMatchId) await importMatchStats(id).catch((e) => app.log.warn(`stats import failed: ${(e as Error).message}`));
       if (m.pugId) await db.pugSession.update({ where: { id: m.pugId }, data: { status: 'COMPLETED', completedAt: new Date() } });
       await audit(db, req.user!.id, 'match.result.manual', 'Match', id, null, { ...b, outcome });
       await notifier.enqueue('match.result', `match.result:${id}`, { title: `Result: Team ${b.winner === 'amber' ? 'Amber' : 'Sapphire'} wins`, description: `${source === 'MANUAL' ? 'Manually verified by a moderator' : 'Simulated'}`, url: `${cfg.PUBLIC_URL}/matches/${id}`, color: COLORS.teal }, m.isSimulated);
@@ -570,6 +680,8 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     }
     return outcome;
   });
+
+  app.post('/api/matches/:id/stats/import', { preHandler: requireRole('MODERATOR') }, async (req) => importMatchStats((req.params as { id: string }).id));
 
   // ---------- Leaderboard / Players ----------
   app.get('/api/leaderboard', async (req) => {
@@ -686,7 +798,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
         const ls = live.get(match.id, true)!.state!;
         await db.playerStatistic.createMany({ data: Object.values(ls.players).map((p) => {
           const u = players.find((x) => x.displayName === p.name)!; const team = p.team === 2 ? 'amber' : 'sapphire';
-          return { resultId: result.id, userId: u.id, team: toSide(team), heroId: p.heroId, kills: p.kills, deaths: p.deaths, assists: p.assists, netWorth: p.netWorth, heroDamage: p.heroDamage, won: team === winner, displayNameSnapshot: u.displayName };
+          return { resultId: result.id, userId: u.id, team: toSide(team), heroId: p.heroId, kills: p.kills, deaths: p.deaths, assists: p.assists, netWorth: p.netWorth, heroDamage: p.heroDamage, won: team === winner, displayNameSnapshot: u.displayName, details: simulateDetails({ kills: p.kills ?? 0, deaths: p.deaths ?? 0, assists: p.assists ?? 0, netWorth: p.netWorth ?? 0, heroDamage: p.heroDamage ?? 0 }, Math.round(ls.gameTime ?? 0), items.map((i) => i.id)) as unknown as Prisma.InputJsonValue };
         }) });
         await db.match.update({ where: { id: match.id }, data: { trackingState: 'MATCH_COMPLETED', durationSec: Math.round(ls.gameTime ?? 0), endedAt: new Date() } });
         await db.pugSession.update({ where: { id: pug.id }, data: { status: 'COMPLETED', completedAt: new Date() } });
@@ -756,7 +868,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     });
   }
 
-  app.addHook('onClose', async () => { drafts.shutdown(); lobbies.stop(); await db.$disconnect(); redis?.disconnect(); });
+  app.addHook('onClose', async () => { drafts.shutdown(); lobbies.stop(); clearInterval(statsPoll); await db.$disconnect(); redis?.disconnect(); });
   return { app, db, hub, drafts, createPug, leaderboardTop: async (n: number) => {
     const s = await db.season.findFirst({ where: { isActive: true } });
     if (!s) return [];

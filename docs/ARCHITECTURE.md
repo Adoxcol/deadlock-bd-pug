@@ -45,3 +45,7 @@ Prearranged teams may skip the toss and player picks only with two full rosters 
 `draft/formation.ts` contains the pure rules, exported through `draft/engine.ts`. Commands use a per-PUG lock and `expectedSeq`; a database compare-and-swap protects across processes. The transaction saves the formation snapshot, PUG participants, and audit entry together. Completion also creates exactly one hero draft with name snapshots and locked rosters in that transaction. The room refreshes every two seconds; participants move to the hero draft when formation completes.
 
 PUG-linked creation and manual participant endpoints cannot bypass this flow. Locked hero drafts reject seat, team, and side changes, including on rematch. Older PUGs, external providers, standalone hero drafts, and the automatic match simulator retain their existing flows. Mid-draft substitutions are not supported by the formation UI.
+
+### Invite lobbies
+
+Native PUGs created from Create lobby get a six-character room code and three secret `PugInvite` tokens (Captain A, Captain B, players). Only the creator and moderators receive the tokens. `POST /api/pugs/:id/invite` seats the holder or adds them to the pool; plain formation `join` and `captain` commands are rejected on these rooms. The bare room link is view-only. The lobby's hero draft rules live in `PugSession.settings` and apply at the draft handoff.

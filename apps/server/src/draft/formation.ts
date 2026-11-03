@@ -14,21 +14,39 @@ export interface Formation {
   votes: CaptainSeat[];
   picks: { captain: CaptainSeat; userId: string }[];
   draftId: string | null;
+  /** Names captains typed. A missing entry means the default, "<captain>'s Team". */
+  teamNames?: Partial<Record<CaptainSeat, string>>;
 }
 export type FormationCommand =
   | { kind: 'join' } | { kind: 'leave' } | { kind: 'toss' }
   | { kind: 'captain'; seat: CaptainSeat }
   | { kind: 'team'; seat: CaptainSeat | null }
-  | { kind: 'choice'; advantage: 'first' | 'side' }
+  | { kind: 'choice'; advantage: 'first' | 'side'; side?: TeamSide }
+  | { kind: 'teamName'; name: string }
   | { kind: 'side'; side: TeamSide }
   | { kind: 'pick'; userId: string }
   | { kind: 'skip'; agree: boolean };
+export const defaultTeamName = (captain: string) => `${captain.replace('[SIM] ', '')}'s Team`.slice(0, 32);
 export const newFormation = (): Formation => ({ seq: 0, phase: 'waiting', players: [], captains: { a: null, b: null }, teams: { a: [], b: [] }, sides: { a: 'amber', b: 'sapphire' }, winner: null, first: null, sideChooser: null, votes: [], picks: [], draftId: null });
 const other = (s: CaptainSeat): CaptainSeat => s === 'a' ? 'b' : 'a';
 export function pickingCaptain(s: Formation): CaptainSeat | null {
   return s.first ? (Math.floor((s.picks.length + 1) / 2) % 2 === 0 ? s.first : other(s.first)) : null;
 }
 function check(ok: unknown, message: string): asserts ok { if (!ok) throw Object.assign(new Error(message), { statusCode: 409 }); }
+
+export type InviteRole = 'captainA' | 'captainB' | 'player';
+
+/** Applies an invite link. Reopening a link you already used changes nothing and returns the same object. */
+export function applyInvite(prev: Formation, role: InviteRole, userId: string, size: number): Formation {
+  const seat = role === 'captainA' ? 'a' : role === 'captainB' ? 'b' : null;
+  if (seat ? prev.captains[seat] === userId : prev.players.includes(userId)) return prev;
+  const never = (): CaptainSeat => 'a';
+  // Two pool slots stay reserved so the player link can't lock the captains out.
+  if (!seat) check(prev.players.filter((id) => id !== prev.captains.a && id !== prev.captains.b).length < size * 2 - 2, 'The player pool is full.');
+  let next = prev.players.includes(userId) ? prev : applyFormationCommand(prev, { kind: 'join' }, userId, size, prev.seq, never);
+  if (seat) next = applyFormationCommand(next, { kind: 'captain', seat }, userId, size, next.seq, never);
+  return next;
+}
 
 /** Randomness is supplied by the server; the result is committed with the action, never rerolled on reads. */
 export function applyFormationCommand(prev: Formation, cmd: FormationCommand, userId: string, size: number, expectedSeq: number, toss: () => CaptainSeat): Formation {
@@ -70,7 +88,15 @@ export function applyFormationCommand(prev: Formation, cmd: FormationCommand, us
     case 'choice':
       check(s.phase === 'choice' && seat === s.winner, 'Only the toss winner can choose.');
       s.first = cmd.advantage === 'first' ? s.winner : other(s.winner!);
-      s.sideChooser = other(s.first!); s.phase = 'side'; break;
+      s.sideChooser = other(s.first!); s.phase = 'side';
+      // A winner who takes a side names it in one step, so there is nothing left to wait for.
+      if (cmd.advantage === 'side' && cmd.side) { s.sides[seat!] = cmd.side; s.sides[other(seat!)] = cmd.side === 'amber' ? 'sapphire' : 'amber'; s.phase = 'picking'; }
+      break;
+    case 'teamName':
+      check(seat, 'Only a captain can name their team.');
+      s.teamNames = { ...s.teamNames };
+      if (cmd.name) s.teamNames[seat] = cmd.name; else delete s.teamNames[seat];
+      break;
     case 'side':
       check(s.phase === 'side' && seat === s.sideChooser, 'The other captain has side choice.');
       s.sides[seat!] = cmd.side; s.sides[other(seat!)] = cmd.side === 'amber' ? 'sapphire' : 'amber';

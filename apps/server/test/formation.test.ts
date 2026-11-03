@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyFormationCommand, newFormation, pickingCaptain, type Formation, type FormationCommand } from '../src/draft/formation.js';
+import { defaultTeamName, applyFormationCommand, newFormation, pickingCaptain, type Formation, type FormationCommand , applyInvite } from '../src/draft/formation.js';
 import { applyCommand, buildDefaultSequence, createDraftState } from '../src/draft/engine.js';
 
 function room(size = 6) {
@@ -70,5 +70,53 @@ describe('PUG team formation', () => {
     for (const cmd of [{ kind: 'joinTeam', team: 'amber' }, { kind: 'swapSides' }, { kind: 'leaveSeat' }, { kind: 'claimSeat', team: 'sapphire' }] as const) {
       expect(() => applyCommand(state, cmd, { userId: 'p0', isModerator: true }, { now: 0, heroIds: [] })).toThrow(/locked/);
     }
+  });
+});
+
+describe('invite links', () => {
+  it('seats a captain, fills the pool, and ignores a reopened link', () => {
+    let s = newFormation();
+    s = applyInvite(s, 'captainA', 'cap', 2);
+    expect(s.captains.a).toBe('cap'); expect(s.players).toEqual(['cap']);
+    expect(applyInvite(s, 'captainA', 'cap', 2)).toBe(s);
+    s = applyInvite(s, 'player', 'p1', 2);
+    expect(applyInvite(s, 'player', 'p1', 2)).toBe(s);
+  });
+  it('rejects a taken seat and keeps pool slots for the captains', () => {
+    let s = applyInvite(newFormation(), 'captainA', 'cap', 2);
+    expect(() => applyInvite(s, 'captainA', 'other', 2)).toThrow('occupied');
+    s = applyInvite(applyInvite(s, 'player', 'p1', 2), 'player', 'p2', 2);
+    expect(() => applyInvite(s, 'player', 'p3', 2)).toThrow('full');
+    expect(applyInvite(s, 'captainB', 'capB', 2).captains.b).toBe('capB');
+  });
+  it('lets a pool player move into an open captain seat', () => {
+    const s = applyInvite(applyInvite(newFormation(), 'player', 'p1', 2), 'captainB', 'p1', 2);
+    expect(s.captains.b).toBe('p1'); expect(s.players).toEqual(['p1']);
+  });
+});
+
+describe('toss and team names', () => {
+  const ready = () => {
+    let s = applyInvite(applyInvite(newFormation(), 'captainA', 'a', 2), 'captainB', 'b', 2);
+    s = applyInvite(applyInvite(s, 'player', 'p1', 2), 'player', 'p2', 2);
+    return applyFormationCommand(s, { kind: 'toss' }, 'a', 2, s.seq, () => 'a');
+  };
+  it('lets the winner take a side in one step and leaves first pick to the other captain', () => {
+    const s = ready();
+    const next = applyFormationCommand(s, { kind: 'choice', advantage: 'side', side: 'sapphire' }, 'a', 2, s.seq, () => 'a');
+    expect(next.phase).toBe('picking'); expect(next.sides).toEqual({ a: 'sapphire', b: 'amber' }); expect(next.first).toBe('b');
+  });
+  it('gives the other captain the side when the winner takes first pick', () => {
+    const s = ready();
+    const next = applyFormationCommand(s, { kind: 'choice', advantage: 'first' }, 'a', 2, s.seq, () => 'a');
+    expect(next.phase).toBe('side'); expect(next.first).toBe('a'); expect(next.sideChooser).toBe('b');
+  });
+  it('lets only captains name their own team, and blank restores the default', () => {
+    const s = ready();
+    const named = applyFormationCommand(s, { kind: 'teamName', name: 'Bandits' }, 'b', 2, s.seq, () => 'a');
+    expect(named.teamNames).toEqual({ b: 'Bandits' });
+    expect(applyFormationCommand(named, { kind: 'teamName', name: '' }, 'b', 2, named.seq, () => 'a').teamNames).toEqual({});
+    expect(() => applyFormationCommand(s, { kind: 'teamName', name: 'X' }, 'p1', 2, s.seq, () => 'a')).toThrow('captain');
+    expect(defaultTeamName('[SIM] Rafi')).toBe("Rafi's Team");
   });
 });

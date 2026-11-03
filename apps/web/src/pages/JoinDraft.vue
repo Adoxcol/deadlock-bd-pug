@@ -8,7 +8,7 @@ const props = defineProps<{ code: string }>();
 const router = useRouter();
 const error = ref<string | null>(null);
 onMounted(async () => {
-  try { const r = await api<{ id: string }>(`/drafts/code/${encodeURIComponent(props.code)}`); router.replace(`/draft/${r.id}`); }
+  try { const r = await api<{ id?: string; pugId?: string }>(`/drafts/code/${encodeURIComponent(props.code)}`); router.replace(r.pugId ? `/pugs/${r.pugId}` : `/draft/${r.id}`); }
   catch (e) { error.value = (e as Error).message; }
 });
 </script>

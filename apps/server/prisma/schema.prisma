@@ -125,6 +125,13 @@ model Season {
 }
 
 model PugSession {
+  /// Optional room name shown instead of "PUG #n".
+  name           String?
+  /// Six-letter share code. Null on PUGs that predate invite links.
+  code           String?             @unique
+  /// Hero draft rules chosen when the lobby was created.
+  settings       Json?
+  invites        PugInvite[]
   formation      Json?
   formationSeq   Int                 @default(0)
   id             String              @id @default(cuid())
@@ -145,6 +152,16 @@ model PugSession {
   matches        Match[]
 
   @@index([status, createdAt])
+}
+
+/// Lives apart from PugSession so a spread of a PUG can never leak a token to spectators.
+model PugInvite {
+  token String     @id
+  pugId String
+  pug   PugSession @relation(fields: [pugId], references: [id], onDelete: Cascade)
+  role  String // captainA | captainB | player
+
+  @@unique([pugId, role])
 }
 
 model PugParticipant {
@@ -347,6 +364,8 @@ model PlayerStatistic {
   heroDamage          Int?
   won                 Boolean
   displayNameSnapshot String
+  /// Detailed stats from final metadata; null when not published for this match.
+  details             Json?
 
   @@unique([resultId, userId])
   @@index([userId])

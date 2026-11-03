@@ -11,3 +11,8 @@ RatingTransaction, Season, DiscordNotification, AuditLog, Hero.
 
 
 `PugSession.formation` stores the optional authoritative team-formation snapshot (captains, player pool, toss outcome, sides, consent, pick history, and resulting draft ID). `formationSeq` is the optimistic concurrency version. Existing PUGs have a null formation and retain manual behavior. Formation actions and snapshots are recorded in `AuditLog` in the same transaction as roster changes.
+
+`PugSession.name`, `code` and `settings` hold the optional lobby name, share code and hero draft rules. `PugInvite` stores invite tokens per role in a separate table, so returning a PUG never exposes them.
+
+## Detailed player stats
+`PlayerStatistic.details` (JSON, nullable) holds level, last hits, denies, damage and healing totals, soul sources, item timeline and souls/damage timeline, normalized from `GET /v1/matches/{id}/metadata` by `tracker/matchStats.ts`. Null means not published for that match; an individual value the API did not send is also null, never 0. Importing fills existing rows only and never creates a result or changes ratings. `objectiveDamage` is mapped from `boss_damage`, which is unconfirmed against the in-game scoreboard.

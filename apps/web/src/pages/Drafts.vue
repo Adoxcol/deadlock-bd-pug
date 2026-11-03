@@ -20,6 +20,7 @@ function join() { if (clean.value.length === 6) router.push(`/d/${clean.value}`)
 <template>
   <div class="max-w-5xl mx-auto space-y-5">
     <PageHeader eyebrow="Draft rooms" title="Drafts">
+      <RouterLink v-if="session.can('MODERATOR')" to="/drafts/external" class="btn-ghost">Link external draft</RouterLink>
       <RouterLink v-if="session.can('PLAYER')" to="/drafts/new" class="btn-primary"><Plus class="w-4 h-4" />Create lobby</RouterLink>
     </PageHeader>
 
@@ -27,7 +28,7 @@ function join() { if (clean.value.length === 6) router.push(`/d/${clean.value}`)
       <div>
         <label class="label" for="code">Join lobby</label>
         <input id="code" :value="clean" class="input !h-14 font-display text-3xl tracking-[0.5em] uppercase text-center sm:text-left placeholder:text-muted/40" placeholder="ABC123" maxlength="6" autocomplete="off" @input="code = ($event.target as HTMLInputElement).value" />
-        <p class="text-xs text-muted mt-1.5">The six-character code from the draft link.</p>
+        <p class="text-xs text-muted mt-1.5">The six-character room code. This joins as a viewer; players and captains use their invite links.</p>
       </div>
       <button class="btn-primary !h-14" :disabled="clean.length !== 6"><LogIn class="w-4 h-4" />Join</button>
     </form>

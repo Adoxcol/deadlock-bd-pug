@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { takeReturn } from '../lib/returnTo';
 import UiSelect from '../components/UiSelect.vue';
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -12,7 +13,7 @@ const name = ref('Moderator');
 const role = ref<Role>('OWNER');
 const err = ref<string | null>(null);
 async function devLogin() {
-  try { await api('/dev/login', { method: 'POST', body: { name: name.value, role: role.value } }); await session.load(); router.push('/'); }
+  try { await api('/dev/login', { method: 'POST', body: { name: name.value, role: role.value } }); await session.load(); router.push(takeReturn() ?? '/'); }
   catch (e) { err.value = (e as Error).message; }
 }
 </script>
