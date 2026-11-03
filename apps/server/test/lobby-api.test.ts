@@ -68,17 +68,18 @@ describe('fetchHeroes (mocked deadlock-api assets)', () => {
       return new Response(JSON.stringify([
         { id: 1, name: 'Infernus', class_name: 'hero_inferno', hero_type: 'brawler', player_selectable: true, images: { icon_hero_card: 'https://cdn/x.png', icon_hero_card_webp: 'https://cdn/x.webp' } },
         { id: 2, name: 'Old', disabled: true, images: {} },
-        { id: 3, name: 'WIP', in_development: true, images: {} },
+        { id: 3, name: 'Hidden', player_selectable: false, images: {} },
+        { id: 5, name: 'Violet', in_development: true, images: {} },
         { id: 4, name: 'Seven', images: { icon_hero_card: 'https://cdn/7.png' } },
       ]), { status: 200 });
     }) as unknown as typeof fetch;
     const heroes = await fetchHeroes('https://api.example', f);
     expect(urls[0]).toBe('https://api.example/v1/assets/heroes?only_active=true');
-    expect(heroes.map((h) => h.name)).toEqual(['Infernus', 'Seven']);
+    expect(heroes.map((h) => h.name)).toEqual(['Infernus', 'Violet', 'Seven']);
     expect(heroes[0]).toMatchObject({ imageUrl: 'https://cdn/x.webp', heroType: 'brawler' });
-    expect(heroes[1]!.imageUrl).toBe('https://cdn/7.png');
+    expect(heroes[2]!.imageUrl).toBe('https://cdn/7.png');
     expect(heroes[0]!.vo).toEqual({ pick: ['https://cdn/s1.mp3'], ban: ['https://cdn/u1.mp3'] });
-    expect(heroes[1]!.vo).toBeUndefined();
+    expect(heroes[2]!.vo).toBeUndefined();
   });
   it('rejects errors and empty lists so the built-in roster stays in use', async () => {
     await expect(fetchHeroes('https://a', (async () => new Response('{}', { status: 500 })) as unknown as typeof fetch)).rejects.toThrow();

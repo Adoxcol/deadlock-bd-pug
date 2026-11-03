@@ -23,7 +23,8 @@ import { matchPoints, rankOf, skillRating, standings, underdogBonus } from './ra
 import { RedisSessionStore, MemorySessionStore, type SessionStore } from './auth/session.js';
 import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
-import { steamLoginUrl, verifySteamAssertion, steam64ToAccountId } from './auth/steam.js';
+import { steamLoginUrl, verifySteamAssertion } from './auth/steam.js';
+import { linkSteam } from './auth/linkSteam.js';
 import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
 import { normalizeReplay } from './tracker/replay.js';
 import { matchPlayers, normalizeMetadata, simulateDetails } from './tracker/matchStats.js';
@@ -270,19 +271,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   app.get('/api/auth/steam/callback', { preHandler: requireRole('SPECTATOR') }, async (req, reply) => {
     const id64 = await verifySteamAssertion(req.query as Record<string, string>, `${cfg.PUBLIC_URL}/api/auth/steam/callback`);
     if (!id64) return reply.redirect('/profile?steam=failed');
-    const taken = await db.steamAccount.findUnique({ where: { steamId64: id64 } });
-    if (taken && taken.userId !== req.user!.id) {
-      // Imported players get a placeholder account with no Discord login; the real owner claims its matches here.
-      if (await db.discordAccount.findUnique({ where: { userId: taken.userId } })) return reply.redirect('/profile?steam=taken');
-      await db.$transaction([
-        db.playerStatistic.updateMany({ where: { userId: taken.userId }, data: { userId: req.user!.id } }),
-        db.steamAccount.delete({ where: { id: taken.id } }),
-        db.user.delete({ where: { id: taken.userId } }),
-      ]);
-    }
-    await db.steamAccount.upsert({ where: { userId: req.user!.id }, create: { userId: req.user!.id, steamId64: id64, accountId: steam64ToAccountId(id64) }, update: { steamId64: id64, accountId: steam64ToAccountId(id64) } });
-    await audit(db, req.user!.id, 'steam.link', 'User', req.user!.id, null, { steamId64: id64 });
-    return reply.redirect('/profile?steam=linked');
+    const outcome = await linkSteam(db, req.user!.id, id64);
+    if (outcome.status === 'taken') return reply.redirect('/profile?steam=taken');
+    await audit(db, req.user!.id, 'steam.link', 'User', req.user!.id, null, { steamId64: id64, claimedMatches: outcome.claimed });
+    return reply.redirect(`/profile?steam=linked&claimed=${outcome.claimed}`);
   });
   app.post('/api/auth/logout', async (req, reply) => {
     if (req.sessionId) await sessions.destroy(req.sessionId);
@@ -661,7 +653,12 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     }
     return { resolution: out, match: match && publicMatch(match) };
   });
-  app.get('/api/matches', async () => (await db.match.findMany({ orderBy: { createdAt: 'desc' }, take: 50, include: { result: true, pug: true } })).map(publicMatch));
+  app.get('/api/matches', async () => {
+    const rows = await db.match.findMany({ orderBy: { createdAt: 'desc' }, take: 50, include: { result: { include: { stats: true } }, pug: { include: { teams: true } } } });
+    const when = (m: { startedAt: Date | null; createdAt: Date }) => (m.startedAt ?? m.createdAt).getTime();
+    // Imported matches are created together, so order by when they were played.
+    return rows.sort((a, b) => when(b) - when(a)).map((m) => publicMatch({ ...m, result: m.result && { ...m.result, stats: m.result.stats.map(({ details: _d, ...s }) => ({ ...s, points: m.result!.rated ? matchPoints(withBonus(s, m.result!)) : null })) } }));
+  });
   app.get('/api/matches/:id', async (req) => {
     const { id } = req.params as { id: string };
     const m = await db.match.findUnique({ where: { id }, include: { result: { include: { stats: true } }, pug: { include: { teams: true } }, participants: true } });

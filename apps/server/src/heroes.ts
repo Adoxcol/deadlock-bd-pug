@@ -11,7 +11,7 @@ export interface Hero {
 
 /**
  * Live roster from deadlock-api: `GET {DEADLOCK_API_URL}/v1/assets/heroes?only_active=true` (verified in the
- * deadlock-api source, api/src/routes/v1/assets/heroes/route.rs; `only_active` hides disabled/in-development heroes).
+ * deadlock-api source, api/src/routes/v1/assets/heroes/route.rs).
  * Portrait field names match deadlock-api's own HeroImage component (icon_hero_card_webp / icon_hero_card).
  */
 export async function fetchHeroes(apiUrl: string, fetchImpl: typeof fetch = fetch): Promise<Hero[]> {
@@ -21,7 +21,8 @@ export async function fetchHeroes(apiUrl: string, fetchImpl: typeof fetch = fetc
   if (!Array.isArray(raw)) throw new Error('Unexpected hero assets response');
   const vo = await fetchVoicelines(apiUrl, fetchImpl);
   const heroes = raw
-    .filter((h) => !h.disabled && !h.in_development && h.player_selectable !== false)
+    // Not in_development: only_active already drops unreleased heroes, while Violet and Baba keep that flag and are played.
+    .filter((h) => !h.disabled && h.player_selectable !== false)
     .map((h) => ({
       id: h.id, name: h.name, simulated: false, heroType: h.hero_type ?? null,
       imageUrl: h.images?.icon_hero_card_webp ?? h.images?.icon_hero_card ?? h.images?.top_bar_vertical_image ?? h.images?.icon_image_small ?? null,

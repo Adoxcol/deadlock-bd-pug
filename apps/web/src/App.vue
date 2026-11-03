@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { LayoutDashboard, Swords, Crosshair, Trophy, Shield, LogOut, Wifi, WifiOff, Radio, Plus, MessageCircle } from 'lucide-vue-next';
+import { LayoutDashboard, Swords, Crosshair, Trophy, Shield, LogOut, Wifi, WifiOff, Radio, Plus, MessageCircle, X } from 'lucide-vue-next';
 import { useSession } from './stores/session';
 import { realtime } from './lib/ws';
 import { takeReturn } from './lib/returnTo';
@@ -32,6 +32,11 @@ const nav = computed(() => [
 ].filter((n) => !n.min || session.can(n.min)));
 const isActive = (to: string) => (to === '/' ? route.path === '/' : route.path.startsWith(to) || (to === '/drafts' && route.path.startsWith('/draft')));
 const initial = computed(() => session.user?.displayName.replace('[SIM] ', '').charAt(0).toUpperCase() ?? '?');
+const STEAM_HINT_KEY = 'steam-hint-dismissed';
+const readHint = () => { try { return localStorage.getItem(STEAM_HINT_KEY) === '1'; } catch { return false; } };
+const hintDismissed = ref(readHint());
+function dismissHint() { hintDismissed.value = true; try { localStorage.setItem(STEAM_HINT_KEY, '1'); } catch { /* the banner just returns next visit */ } }
+const steamHint = computed(() => !!session.user && !session.user.isSimulated && !session.me?.steam && !hintDismissed.value);
 </script>
 
 <template>
@@ -64,6 +69,11 @@ const initial = computed(() => session.user?.displayName.replace('[SIM] ', '').c
         </div>
       </div>
     </header>
+    <div v-if="steamHint" class="border-b border-line bg-surface px-4 lg:px-6 py-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+      <span class="min-w-0 flex-1 basis-64">Link your Steam account to claim your past PUG matches and points.</span>
+      <a href="/api/auth/steam" class="btn-ghost !h-8">Link Steam</a>
+      <button class="btn-ghost !h-8 !px-2" title="Dismiss" aria-label="Dismiss Steam reminder" @click="dismissHint"><X class="w-4 h-4" /></button>
+    </div>
 
     <main :class="['flex-1 min-w-0', landing ? '' : wide ? 'px-3 lg:px-4 py-4' : 'px-4 lg:px-6 py-6']"><RouterView /></main>
     <footer class="border-t border-line text-xs text-muted py-4 px-4 text-center">Community project · Not affiliated with Valve. Hero data via deadlock-api.com.</footer>

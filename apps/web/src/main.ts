@@ -24,7 +24,7 @@ const router = createRouter({
     { path: '/matches/:matchId/live', component: () => import('./pages/LiveMatch.vue'), props: true },
     { path: '/leaderboard', component: () => import('./pages/Leaderboard.vue') },
     { path: '/players/:playerId', component: () => import('./pages/Player.vue'), props: true },
-    { path: '/profile', redirect: () => { const s = useSession(); return s.user ? `/players/${s.user.id}` : '/login'; } },
+    { path: '/profile', redirect: (to) => { const s = useSession(); return s.user ? { path: `/players/${s.user.id}`, query: to.query } : '/login'; } },
     { path: '/admin', component: () => import('./pages/Admin.vue') },
     { path: '/:pathMatch(.*)*', component: () => import('./pages/NotFound.vue') },
   ],

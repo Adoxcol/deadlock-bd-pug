@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { Link2, Eye, ChevronRight } from 'lucide-vue-next';
 import UiSelect from '../components/UiSelect.vue';
 import { api } from '../lib/api';
@@ -41,6 +42,15 @@ const spark = computed(() => {
 });
 async function setVis(v: string) { await api('/me/visibility', { method: 'PATCH', body: { visibility: v } }); await load(); }
 const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id));
+const route = useRoute();
+/** Result of returning from Steam; the redirect keeps it in the query. */
+const steamNotice = computed(() => {
+  const s = route.query.steam, claimed = Number(route.query.claimed ?? 0);
+  if (s === 'linked') return { ok: true, text: claimed ? `Steam linked. ${claimed} past ${claimed === 1 ? 'match was' : 'matches were'} added to your profile.` : 'Steam linked. No past matches were waiting for this account.' };
+  if (s === 'taken') return { ok: false, text: 'That Steam account could not be linked: it belongs to another player, or both accounts played the same match. Ask a moderator for help.' };
+  if (s === 'failed') return { ok: false, text: 'Steam could not confirm your sign-in, so nothing was linked. Please try again.' };
+  return null;
+});
 </script>
 
 <template>
@@ -71,6 +81,7 @@ const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id))
         </div>
       </header>
 
+      <p v-if="self && steamNotice" role="status" :class="['card p-3 text-sm border-l-2', steamNotice.ok ? 'border-l-accent' : 'border-l-danger']">{{ steamNotice.text }}</p>
       <div v-if="self" class="card p-3 flex flex-wrap items-center gap-3 text-sm">
         <a v-if="!p.steam" href="/api/auth/steam" class="btn-ghost !h-9"><Link2 class="w-4 h-4" />Link Steam account</a>
         <span class="flex items-center gap-2 text-muted ml-auto"><Eye class="w-4 h-4" />Profile visibility</span>
