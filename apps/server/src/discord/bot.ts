@@ -7,7 +7,7 @@ import type { Role } from '../auth/rbac.js';
 export interface BotDeps {
   db: PrismaClient; publicUrl: string;
   createPug(createdById: string): Promise<{ id: string; number: number }>;
-  leaderboard(limit: number): Promise<Array<{ displayName: string; rating: number; wins: number; losses: number }>>;
+  leaderboard(limit: number): Promise<Array<{ displayName: string; points: number; wins: number; losses: number }>>;
 }
 
 const definitions = [
@@ -65,7 +65,7 @@ export async function startBot(token: string, appId: string, guildId: string | u
       }
       case 'leaderboard': {
         const top = await deps.leaderboard(10);
-        await i.reply({ embeds: [new EmbedBuilder().setTitle('Leaderboard').setDescription(top.map((p, n) => `**${n + 1}.** ${p.displayName} — ${p.rating} (${p.wins}W/${p.losses}L)`).join('\n') || 'No rated players yet.')], components: [link('/leaderboard', 'Full leaderboard')] }); return;
+        await i.reply({ embeds: [new EmbedBuilder().setTitle('Leaderboard').setDescription(top.map((p, n) => `**${n + 1}.** ${p.displayName} — ${p.points} pts (${p.wins}W/${p.losses}L)`).join('\n') || 'No rated players yet.')], components: [link('/leaderboard', 'Full leaderboard')] }); return;
       }
       case 'stats': {
         const target = i.options.getUser('player') ?? i.user;

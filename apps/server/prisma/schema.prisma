@@ -302,6 +302,7 @@ model Match {
   participants       MatchParticipant[]
   events             MatchEvent[]
   result             MatchResult?
+  replay             MatchReplay?
 
   @@index([trackingState])
   @@index([partyId])
@@ -336,6 +337,14 @@ model MatchEvent {
   @@index([matchId, tick])
 }
 
+model MatchReplay {
+  id        String   @id @default(cuid())
+  matchId   String   @unique
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  data      Json
+  createdAt DateTime @default(now())
+}
+
 model MatchResult {
   id           String            @id @default(cuid())
   matchId      String            @unique
@@ -346,6 +355,9 @@ model MatchResult {
   verified     Boolean           @default(false)
   verifiedById String?
   rated        Boolean           @default(false)
+  /// Average team ratings when the result was recorded; null means no underdog bonus.
+  amberRating    Int?
+  sapphireRating Int?
   createdAt    DateTime          @default(now())
   stats        PlayerStatistic[]
 }

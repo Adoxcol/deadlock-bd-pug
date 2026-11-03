@@ -20,6 +20,7 @@ const router = createRouter({
     { path: '/tracker', component: () => import('./pages/Tracker.vue') },
     { path: '/matches', component: () => import('./pages/Matches.vue') },
     { path: '/matches/:matchId', component: () => import('./pages/Match.vue'), props: true },
+    { path: '/matches/:matchId/replay', component: () => import('./pages/MatchReplay.vue'), props: true },
     { path: '/matches/:matchId/live', component: () => import('./pages/LiveMatch.vue'), props: true },
     { path: '/leaderboard', component: () => import('./pages/Leaderboard.vue') },
     { path: '/players/:playerId', component: () => import('./pages/Player.vue'), props: true },

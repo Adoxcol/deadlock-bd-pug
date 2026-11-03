@@ -153,12 +153,12 @@ const heroOf = (id: number) => heroes.byId(id);
               <div class="flex items-center justify-between mb-3"><h2 class="h-section text-lg">Top Players <span class="font-sans normal-case tracking-normal text-sm font-normal text-muted">{{ data.season ? `(${data.season.name})` : '' }}</span></h2><RouterLink to="/leaderboard" class="text-xs text-primary hover:underline">View all</RouterLink></div>
               <PageState :empty="!data.leaderboard.length" :empty-text="data.season ? 'No rated players yet.' : 'No active season.'">
                 <table class="w-full table-compact">
-                  <thead><tr><th>#</th><th>Player</th><th class="text-right">Rating</th><th class="text-right">W/L</th></tr></thead>
+                  <thead><tr><th>#</th><th>Player</th><th class="text-right">Points</th><th class="text-right">W/L</th></tr></thead>
                   <tbody>
                     <tr v-for="(p, i) in data.leaderboard" :key="p.userId" class="hover:bg-raised/40">
                       <td :class="['font-display tabular-nums', i === 0 ? 'text-primary' : 'text-muted']">{{ i + 1 }}</td>
                       <td><RouterLink :to="`/players/${p.userId}`" class="font-medium hover:text-primary truncate block max-w-[160px]">{{ p.displayName }}</RouterLink></td>
-                      <td class="text-right font-display tabular-nums">{{ p.rating.toLocaleString() }}</td>
+                      <td class="text-right font-display tabular-nums">{{ p.points.toLocaleString() }}</td>
                       <td class="text-right tabular-nums text-muted">{{ p.wins }} / {{ p.losses }}</td>
                     </tr>
                   </tbody>

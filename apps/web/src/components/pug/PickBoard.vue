@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { Crown, UserRound } from 'lucide-vue-next';
 import TeamNameInput from './TeamNameInput.vue';
+import RankIcon from '../RankIcon.vue';
+import { rankOf } from '../../../../server/src/rating/points';
 import FactionMark from '../draft/FactionMark.vue';
 
-export type BoardTeam = { seat: 'a' | 'b'; side: 'amber' | 'sapphire'; name: string; customName: string; defaultName: string; players: { id: string; name: string; isCaptain: boolean; isMe: boolean }[]; picking: boolean; mine: boolean };
-defineProps<{ teams: BoardTeam[]; size: number; pool: { id: string; name: string }[]; canPick: boolean; pending: boolean; pickNumber: number; totalPicks: number; turnName: string }>();
+export type BoardTeam = { seat: 'a' | 'b'; side: 'amber' | 'sapphire'; name: string; customName: string; defaultName: string; total: number; bonus: number | null; players: { id: string; name: string; rating: number; isCaptain: boolean; isMe: boolean }[]; picking: boolean; mine: boolean };
+defineProps<{ teams: BoardTeam[]; size: number; pool: { id: string; name: string; rating: number }[]; canPick: boolean; pending: boolean; pickNumber: number; totalPicks: number; turnName: string }>();
 const emit = defineEmits<{ pick: [string]; teamName: [string] }>();
 const empties = (t: BoardTeam, size: number) => Math.max(0, size - t.players.length);
 </script>
@@ -28,12 +30,13 @@ const empties = (t: BoardTeam, size: number) => Math.max(0, size - t.players.len
         <FactionMark :team="t.side" :size="16" />
         <TeamNameInput v-if="t.mine" :value="t.customName" :placeholder="t.defaultName" label="Team name" @save="emit('teamName', $event)" />
         <h2 v-else class="font-display text-lg uppercase truncate">{{ t.name }}</h2>
+        <p class="font-mono text-[11px] uppercase tracking-wider text-muted">Total <span class="font-display text-base tabular-nums text-text">{{ t.total.toLocaleString() }}</span><span v-if="t.bonus" class="block text-primary normal-case tracking-normal">Underdog: up to +{{ t.bonus }} pts each</span></p>
       </div>
       <ol class="space-y-1">
         <li v-for="p in t.players" :key="p.id" class="flex items-center gap-2 h-10 px-2.5 bg-raised border border-line/70 animate-slot-in min-w-0">
           <Crown v-if="p.isCaptain" class="w-3.5 h-3.5 shrink-0 text-primary" aria-label="Captain" />
           <span class="text-sm font-semibold truncate">{{ p.name }}</span>
-          <span v-if="p.isMe" class="ml-auto font-mono text-[10px] uppercase tracking-wider text-primary">You</span>
+          <span class="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted"><span v-if="p.isMe" class="mr-1.5 uppercase tracking-wider text-primary">You</span><RankIcon :rank="rankOf(p.rating)" :size="16" /> {{ p.rating }}</span>
         </li>
         <li v-for="n in empties(t, size)" :key="`e${n}`" class="flex items-center gap-2 h-10 px-2.5 border border-dashed border-line/60">
           <UserRound class="w-3.5 h-3.5 text-line" aria-hidden="true" />
@@ -49,8 +52,8 @@ const empties = (t: BoardTeam, size: number) => Math.max(0, size - t.players.len
       <ul class="grid grid-cols-2 gap-1.5">
         <li v-for="p in pool" :key="p.id" class="min-w-0">
           <button type="button" :disabled="!canPick || pending" :aria-label="`Pick ${p.name}`"
-            :class="['w-full h-11 px-3 text-left text-sm font-semibold truncate border transition-colors', canPick ? 'border-primary/50 bg-primary/5 hover:bg-primary hover:text-bg cursor-pointer' : 'border-line/70 bg-bg/60 cursor-default']"
-            @click="emit('pick', p.id)">{{ p.name }}</button>
+            :class="['w-full h-11 px-3 flex items-center justify-between gap-2 text-left text-sm font-semibold border transition-colors', canPick ? 'border-primary/50 bg-primary/5 hover:bg-primary hover:text-bg cursor-pointer' : 'border-line/70 bg-bg/60 cursor-default']"
+            @click="emit('pick', p.id)"><span class="truncate">{{ p.name }}</span><span class="shrink-0 font-mono text-[11px] font-normal tabular-nums opacity-70"><RankIcon :rank="rankOf(p.rating)" :size="16" /> {{ p.rating }}</span></button>
         </li>
       </ul>
     </section>

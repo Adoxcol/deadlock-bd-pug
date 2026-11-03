@@ -6,7 +6,7 @@ import HeroCard from '../HeroCard.vue';
 import FactionMark from '../draft/FactionMark.vue';
 import PlayerBreakdown, { type PlayerDetails } from './PlayerBreakdown.vue';
 
-type Stat = { id: string; userId: string | null; displayNameSnapshot: string; heroId: number | null; kills: number | null; deaths: number | null; assists: number | null; netWorth: number | null; heroDamage: number | null; details?: PlayerDetails | null };
+type Stat = { id: string; userId: string | null; displayNameSnapshot: string; heroId: number | null; kills: number | null; deaths: number | null; assists: number | null; netWorth: number | null; heroDamage: number | null; points?: number | null; details?: PlayerDetails | null };
 const props = defineProps<{ team: 'amber' | 'sapphire'; name: string; won: boolean; stats: Stat[] }>();
 const heroes = useHeroes();
 const open = ref<string | null>(null);
@@ -26,7 +26,7 @@ const color = computed(() => props.team === 'amber' ? 'text-amber-team' : 'text-
         <FactionMark :team="team" :size="15" />
         <h2 :class="['font-display text-2xl uppercase flex items-center gap-2 min-w-0', color]"><span class="truncate">{{ name }}</span><Trophy v-if="won" class="w-5 h-5 shrink-0 text-primary" aria-label="Winner" /></h2>
       </div>
-      <p class="font-display text-xl tabular-nums">{{ sum('kills') }}<span class="text-muted"> / {{ sum('deaths') }} / {{ sum('assists') }}</span><span class="ml-3 text-primary">{{ short(sum('netWorth')) }}</span></p>
+      <p class="font-display text-xl tabular-nums">{{ sum('kills') }}<span class="text-muted"> / {{ sum('deaths') }} / {{ sum('assists') }}</span><span class="ml-3 text-accent">{{ short(sum('netWorth')) }}</span></p>
     </header>
     <table class="w-full table-fixed border-collapse">
       <thead>
@@ -37,6 +37,7 @@ const color = computed(() => props.team === 'amber' ? 'text-amber-team' : 'text-
           <th scope="col" class="w-8 sm:w-11 font-bold" title="Deaths">D</th>
           <th scope="col" class="w-8 sm:w-11 font-bold" title="Assists">A</th>
           <th scope="col" class="w-14 sm:w-20 text-right font-bold pr-2" title="Total souls">Souls</th>
+          <th scope="col" class="hidden sm:table-cell w-12 text-right font-bold" title="PUG points earned">Pts</th>
           <th scope="col" class="hidden lg:table-cell w-14 text-right font-bold" title="Last hits">LH</th>
           <th scope="col" class="hidden lg:table-cell w-14 text-right font-bold" title="Denies">Dn</th>
           <th scope="col" class="hidden sm:table-cell w-20 text-right font-bold" title="Damage to heroes">Damage</th>
@@ -52,7 +53,7 @@ const color = computed(() => props.team === 'amber' ? 'text-amber-team' : 'text-
               <HeroCard size="xs" class="shrink-0" :name="heroes.byId(s.heroId)?.name ?? '?'" :src="heroes.byId(s.heroId)?.imageUrl" />
               <span class="min-w-0">
                 <span class="block truncate font-display uppercase">{{ clean(s.displayNameSnapshot) }}</span>
-                <span class="block truncate font-mono text-[10px] uppercase tracking-wider text-muted">{{ heroes.byId(s.heroId)?.name ?? 'Unknown hero' }}</span>
+                <span class="block truncate font-mono text-[10px] uppercase tracking-wider text-muted"><span v-if="s.points != null" class="sm:hidden text-primary">+{{ s.points }} · </span>{{ heroes.byId(s.heroId)?.name ?? 'Unknown hero' }}</span>
               </span>
             </div>
           </td>
@@ -61,6 +62,7 @@ const color = computed(() => props.team === 'amber' ? 'text-amber-team' : 'text-
           <td class="text-center font-display text-lg tabular-nums text-muted">{{ s.deaths ?? '—' }}</td>
           <td class="text-center font-display text-lg tabular-nums">{{ s.assists ?? '—' }}</td>
           <td class="pr-2 text-right font-display text-lg tabular-nums">{{ short(s.netWorth) }}</td>
+          <td class="hidden sm:table-cell text-right font-display text-lg tabular-nums text-primary">{{ s.points != null ? `+${s.points}` : '—' }}</td>
           <td class="hidden lg:table-cell text-right font-display tabular-nums">{{ s.details?.lastHits ?? '—' }}</td>
           <td class="hidden lg:table-cell text-right font-display tabular-nums">{{ s.details?.denies ?? '—' }}</td>
           <td class="hidden sm:table-cell text-right font-display tabular-nums">{{ short(s.heroDamage) }}</td>
@@ -73,7 +75,7 @@ const color = computed(() => props.team === 'amber' ? 'text-amber-team' : 'text-
           </td>
         </tr>
         <tr v-if="open === s.id">
-          <td colspan="12" class="p-0 border-t border-line/40"><PlayerBreakdown :team="team" :user-id="s.userId" :details="s.details ?? null" /></td>
+          <td colspan="13" class="p-0 border-t border-line/40"><PlayerBreakdown :team="team" :user-id="s.userId" :details="s.details ?? null" /></td>
         </tr>
       </tbody>
     </table>

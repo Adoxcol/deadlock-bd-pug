@@ -37,7 +37,8 @@
   .h-section { @apply font-display text-base font-bold uppercase tracking-wider text-text; }
   /* Small ornamental divider used under section titles. */
   .rule-brass { @apply h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent; }
-  .table-compact th { @apply text-left font-display text-xs font-semibold uppercase tracking-wider text-muted px-3 py-2 border-b border-line whitespace-nowrap; }
+  .table-compact :where(th) { text-align: left; }
+  .table-compact th { @apply font-display text-xs font-semibold uppercase tracking-wider text-muted px-3 py-2 border-b border-line whitespace-nowrap; }
   .table-compact td { @apply px-3 py-2 border-b border-line/60 text-sm whitespace-nowrap; }
   .stat-icon { @apply w-11 h-11 rounded-lg grid place-items-center shrink-0; }
 }

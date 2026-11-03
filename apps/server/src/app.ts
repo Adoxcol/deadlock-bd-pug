@@ -19,11 +19,13 @@ import { PrismaDraftStore, syncHeroes } from './db/draftStore.js';
 import { PrismaResultsRepo } from './db/resultsRepo.js';
 import { audit } from './db/audit.js';
 import { processResult } from './results/process.js';
+import { matchPoints, rankOf, skillRating, standings, underdogBonus } from './rating/points.js';
 import { RedisSessionStore, MemorySessionStore, type SessionStore } from './auth/session.js';
 import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
 import { steamLoginUrl, verifySteamAssertion, steam64ToAccountId } from './auth/steam.js';
 import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
+import { normalizeReplay } from './tracker/replay.js';
 import { matchPlayers, normalizeMetadata, simulateDetails } from './tracker/matchStats.js';
 import { createDeadlockApi } from './tracker/deadlockApi.js';
 import { resolveIdentifier } from './tracker/resolve.js';
@@ -123,6 +125,18 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     hub.publish('dashboard', 'match.updated', { id: m.id });
   }
   /** Match rows hold the party code (lets anyone into the game) and the webhook secret hash: never send those. */
+  const withBonus = <T extends { team: 'AMBER' | 'SAPPHIRE'; won: boolean }>(s: T, r: { amberRating: number | null; sapphireRating: number | null }) => ({ ...s, bonus: underdogBonus(s.team, s.won, r.amberRating, r.sapphireRating) });
+  const ratingsFor = async (userIds: string[]) => {
+    const rows = await db.playerStatistic.findMany({ where: { userId: { in: userIds }, result: { rated: true } }, select: { userId: true, won: true, kills: true, deaths: true, assists: true, netWorth: true } });
+    return new Map(userIds.map((id) => { const rating = skillRating(rows.filter((r) => r.userId === id)); return [id, { rating, rank: rankOf(rating) }] as const; }));
+  };
+  // The leaderboard is derived from match stats: only rated results count, private profiles are hidden.
+  const seasonStandings = async (seasonId: string) => {
+    const rows = await db.playerStatistic.findMany({ where: { userId: { not: null }, result: { seasonId, rated: true } }, select: { userId: true, team: true, won: true, kills: true, deaths: true, assists: true, netWorth: true, result: { select: { amberRating: true, sapphireRating: true } } } });
+    const table = standings(rows.map((s) => withBonus(s, s.result)));
+    const users = new Map((await db.user.findMany({ where: { id: { in: table.map((s) => s.userId) }, visibility: { not: 'PRIVATE' } } })).map((u) => [u.id, u]));
+    return table.flatMap((s) => { const user = users.get(s.userId); return user ? [{ ...s, user }] : []; });
+  };
   const publicMatch = <T extends { partyCode?: string | null; callbackSecretHash?: string | null; lobbyCreatedById?: string | null }>(m: T) => {
     const { partyCode: _c, callbackSecretHash: _h, lobbyCreatedById: _u, ...rest } = m; return rest;
   };
@@ -257,7 +271,15 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const id64 = await verifySteamAssertion(req.query as Record<string, string>, `${cfg.PUBLIC_URL}/api/auth/steam/callback`);
     if (!id64) return reply.redirect('/profile?steam=failed');
     const taken = await db.steamAccount.findUnique({ where: { steamId64: id64 } });
-    if (taken && taken.userId !== req.user!.id) return reply.redirect('/profile?steam=taken');
+    if (taken && taken.userId !== req.user!.id) {
+      // Imported players get a placeholder account with no Discord login; the real owner claims its matches here.
+      if (await db.discordAccount.findUnique({ where: { userId: taken.userId } })) return reply.redirect('/profile?steam=taken');
+      await db.$transaction([
+        db.playerStatistic.updateMany({ where: { userId: taken.userId }, data: { userId: req.user!.id } }),
+        db.steamAccount.delete({ where: { id: taken.id } }),
+        db.user.delete({ where: { id: taken.userId } }),
+      ]);
+    }
     await db.steamAccount.upsert({ where: { userId: req.user!.id }, create: { userId: req.user!.id, steamId64: id64, accountId: steam64ToAccountId(id64) }, update: { steamId64: id64, accountId: steam64ToAccountId(id64) } });
     await audit(db, req.user!.id, 'steam.link', 'User', req.user!.id, null, { steamId64: id64 });
     return reply.redirect('/profile?steam=linked');
@@ -294,7 +316,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     ]);
     const activeDrafts = await store.listActive();
     const drafting = activeDrafts.filter((d) => d.state.status === 'drafting' || d.state.status === 'paused');
-    const top = season ? await db.playerRating.findMany({ where: { seasonId: season.id }, orderBy: { rating: 'desc' }, take: 5, include: { user: true } }) : [];
+    const top = season ? (await seasonStandings(season.id)).slice(0, 5) : [];
     return {
       stats: { pugsPlayed, activePugs: activePugs.length, playersDrafting: drafting.reduce((n, d) => n + TEAM_SIZE[d.state.config.format] * 2, 0), matchesLive: liveMatches, completedToday, members },
       sessions: activePugs.map((p) => ({
@@ -305,7 +327,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       })),
       drafts: activeDrafts.filter((d) => d.visibility === 'public').map((d) => ({ id: d.id, code: d.code, name: d.name, status: d.state.status, teamNames: d.teamNames, simulated: d.simulated, startedAt: d.state.startedAt, format: d.state.config.format, picks: d.state.picks, players: [d.state.captains.amber, d.state.captains.sapphire].filter(Boolean).length + d.state.members.amber.length + d.state.members.sapphire.length })),
       recent: recent.map((r) => ({ matchId: r.matchId, winner: r.winner, source: r.source, verified: r.verified, durationSec: r.match.durationSec, date: r.createdAt, pugNumber: r.match.pug?.number ?? null, isSimulated: r.match.isSimulated, teams: Object.fromEntries((r.match.pug?.teams ?? []).map((t) => [t.side.toLowerCase(), t.name])) })),
-      leaderboard: top.map((t) => ({ userId: t.userId, displayName: t.user.displayName, rating: t.rating, wins: t.wins, losses: t.losses })),
+      leaderboard: top.map((t) => ({ userId: t.userId, displayName: t.user.displayName, points: t.points, wins: t.wins, losses: t.losses })),
       season: season && { id: season.id, name: season.name, isSimulated: season.isSimulated },
     };
   });
@@ -352,6 +374,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       // Only the host gets the links. A visitor learns just what their own link grants.
       invites: canManage && invites.length ? Object.fromEntries(invites.map((i) => [i.role, i.token])) : null,
       inviteRole: invites.find((i) => i.token === k)?.role ?? null,
+      ratings: Object.fromEntries(await ratingsFor(p.participants.map((x) => x.userId))),
       participants: p.participants.map((x) => ({ ...x, user: publicUser(x.user) })), matches: p.matches.map(publicMatch),
       draftRooms: p.draftRooms.map((d) => ({ id: d.id, code: d.code, name: d.name, status: d.status, createdAt: d.createdAt })),
     };
@@ -644,7 +667,8 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const m = await db.match.findUnique({ where: { id }, include: { result: { include: { stats: true } }, pug: { include: { teams: true } }, participants: true } });
     if (!m) throw Object.assign(new Error('Match not found'), { statusCode: 404 });
     const draft = m.draftId ? await drafts.get(m.draftId) : null;
-    return { ...publicMatch(m), draft: draft && DraftService.publicView(draft) };
+    const scored = m.result && { ...m.result, stats: m.result.stats.map((s) => ({ ...s, points: m.result!.rated ? matchPoints(withBonus(s, m.result!)) : null })) };
+    return { ...publicMatch(m), result: scored, draft: draft && DraftService.publicView(draft) };
   });
   app.get('/api/matches/:id/live', async (req) => {
     const { id } = req.params as { id: string };
@@ -658,9 +682,12 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     if (!season) throw Object.assign(new Error('No active season'), { statusCode: 409 });
     const source = m.isSimulated ? 'SIMULATED' : 'MANUAL';
     const repo = new PrismaResultsRepo(db, () => toSide(b.winner));
+    // Taken before this match's stats exist, so it reflects the teams as they went in.
+    const before = await ratingsFor([...b.amber, ...b.sapphire]);
+    const teamAverage = (ids: string[]) => Math.round(ids.reduce((n, u) => n + before.get(u)!.rating, 0) / ids.length);
     const outcome = await processResult(repo, { matchId: id, seasonId: season.id, source, verifiedBy: req.user!.id, winners: b.winner === 'amber' ? b.amber : b.sapphire, losers: b.winner === 'amber' ? b.sapphire : b.amber }, { allowSimulated: season.isSimulated, initialRating: season.initialRating, elo: { k: season.kFactor, provisionalK: 40, provisionalGames: 10, scale: 400 } });
     if (outcome.status !== 'duplicate') {
-      const result = await db.matchResult.findUniqueOrThrow({ where: { matchId: id } });
+      const result = await db.matchResult.update({ where: { matchId: id }, data: { amberRating: teamAverage(b.amber), sapphireRating: teamAverage(b.sapphire) } });
       const users = await db.user.findMany({ where: { id: { in: [...b.amber, ...b.sapphire] } } });
       const ls = live.get(id, true)?.state;
       // Hero per player: live data if we have it, otherwise the captain's assignment from the linked draft.
@@ -681,6 +708,23 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     return outcome;
   });
 
+  // Fetched from the Deadlock API the first time someone opens a replay, then served from our database.
+  const replayTried = new Map<string, number>();
+  app.get('/api/matches/:id/replay', async (req) => {
+    const { id } = req.params as { id: string };
+    const m = await db.match.findUnique({ where: { id }, include: { replay: true } });
+    const missing = () => Object.assign(new Error('No replay data is published for this match.'), { statusCode: 404 });
+    if (!m) throw missing();
+    if (m.replay) return m.replay.data;
+    if (!m.deadlockMatchId || m.isSimulated || Date.now() - (replayTried.get(id) ?? 0) < 10 * 60_000) throw missing();
+    replayTried.set(id, Date.now());
+    const r = await api.matchMetadata(m.deadlockMatchId);
+    if (!r.ok && r.status !== 'not_found') throw Object.assign(new Error(r.message), { statusCode: 503 });
+    const data = r.ok ? normalizeReplay(r.data) : null;
+    if (!data) throw missing();
+    await db.matchReplay.upsert({ where: { matchId: id }, create: { matchId: id, data: data as unknown as Prisma.InputJsonValue }, update: {} });
+    return data;
+  });
   app.post('/api/matches/:id/stats/import', { preHandler: requireRole('MODERATOR') }, async (req) => importMatchStats((req.params as { id: string }).id));
 
   // ---------- Leaderboard / Players ----------
@@ -688,15 +732,16 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const q = z.object({ seasonId: z.string().optional(), minMatches: z.coerce.number().int().min(0).default(0) }).parse(req.query);
     const season = q.seasonId ? await db.season.findUnique({ where: { id: q.seasonId } }) : await db.season.findFirst({ where: { isActive: true } });
     if (!season) return { season: null, rows: [] };
-    const rows = await db.playerRating.findMany({ where: { seasonId: season.id, gamesPlayed: { gte: q.minMatches }, user: { visibility: { not: 'PRIVATE' } } }, orderBy: { rating: 'desc' }, take: 200, include: { user: true } });
+    const rows = (await seasonStandings(season.id)).filter((r) => r.matches >= q.minMatches).slice(0, 200);
+    const skill = await ratingsFor(rows.map((r) => r.userId));
     const stats = await db.playerStatistic.groupBy({ by: ['userId'], where: { userId: { in: rows.map((r) => r.userId) }, result: { seasonId: season.id } }, _avg: { kills: true, deaths: true, assists: true } });
     const heroCounts = await db.playerStatistic.groupBy({ by: ['userId', 'heroId'], where: { userId: { in: rows.map((r) => r.userId) }, heroId: { not: null }, result: { seasonId: season.id } }, _count: true });
     const sMap = new Map(stats.map((s) => [s.userId, s._avg]));
     const fav = new Map<string, { heroId: number; n: number }>();
     for (const h of heroCounts) { const c = fav.get(h.userId!); if (!c || h._count > c.n) fav.set(h.userId!, { heroId: h.heroId!, n: h._count }); }
     return { season: { id: season.id, name: season.name, isSimulated: season.isSimulated }, rows: rows.map((r, i) => ({
-      rank: i + 1, userId: r.userId, displayName: r.user.displayName, rating: r.rating, wins: r.wins, losses: r.losses, matches: r.gamesPlayed,
-      winRate: r.gamesPlayed ? r.wins / r.gamesPlayed : null, avg: sMap.get(r.userId) ?? null, mostPlayedHero: fav.get(r.userId) ? heroName(fav.get(r.userId)!.heroId) : null,
+      rank: i + 1, userId: r.userId, displayName: r.user.displayName, points: r.points, rating: skill.get(r.userId)!.rating, tier: skill.get(r.userId)!.rank, wins: r.wins, losses: r.losses, matches: r.matches,
+      winRate: r.matches ? r.wins / r.matches : null, avg: sMap.get(r.userId) ?? null, mostPlayedHero: fav.get(r.userId) ? heroName(fav.get(r.userId)!.heroId) : null,
     })) };
   });
   app.get('/api/seasons', async () => db.season.findMany({ orderBy: { startsAt: 'desc' } }));
@@ -707,11 +752,15 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const self = req.user?.id === id;
     if (u.visibility === 'PRIVATE' && !self && !isMod(req.user)) throw Object.assign(new Error('This profile is private'), { statusCode: 403 });
     if (u.visibility === 'MEMBERS' && !req.user) throw Object.assign(new Error('Log in to view this profile'), { statusCode: 401 });
-    const [history, ratingHistory] = await Promise.all([
+    const [history, scored] = await Promise.all([
       db.playerStatistic.findMany({ where: { userId: id }, include: { result: true }, orderBy: { result: { createdAt: 'desc' } }, take: 30 }),
-      db.ratingTransaction.findMany({ where: { userId: id }, orderBy: { createdAt: 'asc' }, take: 200 }),
+      db.playerStatistic.findMany({ where: { userId: id, result: { rated: true } }, include: { result: true }, orderBy: { result: { createdAt: 'asc' } } }),
     ]);
-    return { user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId }, ratings: u.ratings, history: history.map((h) => ({ ...h, heroName: h.heroId ? heroName(h.heroId) : null })), ratingHistory };
+    const seasonRows = await db.season.findMany({ where: { id: { in: scored.map((s) => s.result.seasonId) } } });
+    const seasons = seasonRows.map((season) => ({ season, ...standings(scored.filter((s) => s.result.seasonId === season.id).map((s) => withBonus(s, s.result)))[0]! }));
+    const active = scored.filter((s) => seasonRows.find((x) => x.id === s.result.seasonId)?.isActive);
+    const pointsHistory = active.map((_, i) => standings(active.slice(0, i + 1).map((s) => withBonus(s, s.result)))[0]!.points);
+    return { skill: (await ratingsFor([id])).get(id), user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
   });
   app.patch('/api/me/visibility', { preHandler: requireRole('SPECTATOR') }, async (req) => {
     const b = z.object({ visibility: z.enum(['PUBLIC', 'MEMBERS', 'PRIVATE']) }).parse(req.body);
@@ -872,6 +921,6 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   return { app, db, hub, drafts, createPug, leaderboardTop: async (n: number) => {
     const s = await db.season.findFirst({ where: { isActive: true } });
     if (!s) return [];
-    return (await db.playerRating.findMany({ where: { seasonId: s.id }, orderBy: { rating: 'desc' }, take: n, include: { user: true } })).map((r) => ({ displayName: r.user.displayName, rating: r.rating, wins: r.wins, losses: r.losses }));
+    return (await seasonStandings(s.id)).slice(0, n).map((r) => ({ displayName: r.user.displayName, points: r.points, wins: r.wins, losses: r.losses }));
   } };
 }

@@ -11,6 +11,7 @@ import Metric from '../components/Metric.vue';
 import SimBadge from '../components/SimBadge.vue';
 import StatTile from '../components/StatTile.vue';
 import HeroCard from '../components/HeroCard.vue';
+import RankIcon from '../components/RankIcon.vue';
 
 const props = defineProps<{ playerId: string }>();
 const session = useSession();
@@ -23,7 +24,7 @@ onMounted(() => { heroes.load().catch(() => {}); load(); });
 watch(() => props.playerId, load);
 
 const self = computed(() => session.user?.id === props.playerId);
-const current = computed(() => p.value?.ratings?.find((r: any) => r.season.isActive));
+const current = computed(() => p.value?.seasons?.find((r: any) => r.season.isActive));
 const name = computed(() => p.value?.user.displayName ?? '');
 const initial = computed(() => name.value.replace('[SIM] ', '').charAt(0).toUpperCase());
 /** Heroes by matches played, with wins, from the recent match history. */
@@ -34,7 +35,7 @@ const favorites = computed(() => {
 });
 const recentForm = computed(() => (p.value?.history ?? []).slice(0, 10).map((h: any) => h.won as boolean));
 const spark = computed(() => {
-  const xs = (p.value?.ratingHistory ?? []).map((t: any) => t.after as number); if (xs.length < 2) return null;
+  const xs = (p.value?.pointsHistory ?? []) as number[]; if (xs.length < 2) return null;
   const min = Math.min(...xs), max = Math.max(...xs), span = max - min || 1;
   return { min, max, points: xs.map((v: number, i: number) => `${(i / (xs.length - 1)) * 300},${70 - ((v - min) / span) * 62 - 4}`).join(' ') };
 });
@@ -61,11 +62,12 @@ const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id))
             <span v-for="(w, i) in recentForm" :key="i" :class="['w-5 h-5 grid place-items-center font-mono text-[10px] font-bold', w ? 'bg-accent/20 text-accent' : 'bg-danger/20 text-danger']">{{ w ? 'W' : 'L' }}</span>
           </div>
         </div>
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:ml-auto w-full sm:w-auto">
-          <StatTile label="Rating" :value="current?.rating?.toLocaleString()" />
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:ml-auto w-full sm:w-auto">
+          <div class="relative"><StatTile label="Rating" :value="p.skill.rating" /><RankIcon :rank="p.skill.rank" :size="26" class="absolute top-2 right-2" /></div>
+          <StatTile label="Points" :value="current?.points?.toLocaleString()" />
           <StatTile label="Wins" :value="current?.wins" tone="win" />
           <StatTile label="Losses" :value="current?.losses" tone="loss" />
-          <StatTile label="Win rate" :value="current?.gamesPlayed ? pct(current.wins / current.gamesPlayed) : null" />
+          <StatTile label="Win rate" :value="current?.matches ? pct(current.wins / current.matches) : null" />
         </div>
       </header>
 
@@ -77,7 +79,7 @@ const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id))
 
       <div class="flex gap-1 border-b border-line overflow-x-auto">
         <button v-for="t in (['overview', 'matches', 'heroes', 'rating'] as const)" :key="t" :aria-pressed="tab === t"
-          :class="['px-4 h-10 -mb-px border-b-2 font-display uppercase tracking-wider text-sm shrink-0', tab === t ? 'border-primary text-text' : 'border-transparent text-muted hover:text-text']" @click="tab = t">{{ t === 'rating' ? 'Rating history' : t }}</button>
+          :class="['px-4 h-10 -mb-px border-b-2 font-display uppercase tracking-wider text-sm shrink-0', tab === t ? 'border-primary text-text' : 'border-transparent text-muted hover:text-text']" @click="tab = t">{{ t === 'rating' ? 'Points history' : t }}</button>
       </div>
 
       <!-- Matches (overview shows the latest five) -->
@@ -92,6 +94,7 @@ const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id))
                 <span class="min-w-0 flex-1"><span class="block truncate">{{ h.heroName ?? 'Unknown hero' }}</span>
                   <span v-if="h.result.source !== 'API'" class="font-mono text-[10px] uppercase tracking-wider text-warn">{{ h.result.source.toLowerCase() }}</span></span>
                 <span class="font-mono text-sm tabular-nums"><Metric :value="h.kills" /> / <Metric :value="h.deaths" /> / <Metric :value="h.assists" /></span>
+                <span v-if="h.points !== null" class="w-10 text-right font-display tabular-nums text-primary">+{{ h.points }}</span>
                 <span class="hidden sm:block w-28 text-right text-xs text-muted">{{ timeAgo(h.result.createdAt) }}</span>
                 <ChevronRight class="w-4 h-4 text-muted" />
               </RouterLink>
@@ -115,19 +118,19 @@ const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id))
 
       <!-- Rating -->
       <section v-if="tab === 'overview' || tab === 'rating'" class="card-ornate p-4">
-        <h2 class="h-section mb-3">Rating history</h2>
+        <h2 class="h-section mb-3">Points history</h2>
         <PageState :empty="!spark" empty-text="Not enough rated matches yet.">
           <div v-if="spark" class="flex gap-3">
             <div class="flex flex-col justify-between font-mono text-[10px] text-muted tabular-nums py-1"><span>{{ spark.max }}</span><span>{{ spark.min }}</span></div>
-            <svg viewBox="0 0 300 70" class="w-full h-28" preserveAspectRatio="none" role="img" aria-label="Rating over time">
+            <svg viewBox="0 0 300 70" class="w-full h-28" preserveAspectRatio="none" role="img" aria-label="Points over time">
               <polyline :points="spark.points" fill="none" stroke="#d4a24c" stroke-width="2" vector-effect="non-scaling-stroke" />
             </svg>
           </div>
         </PageState>
-        <div v-if="tab === 'rating' && p.ratings.length" class="mt-4 grid sm:grid-cols-3 gap-2">
-          <div v-for="r in p.ratings" :key="r.id" class="card px-3 py-2">
+        <div v-if="tab === 'rating' && p.seasons.length" class="mt-4 grid sm:grid-cols-3 gap-2">
+          <div v-for="r in p.seasons" :key="r.id" class="card px-3 py-2">
             <div class="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{{ r.season.name }}</div>
-            <div class="font-display text-xl tabular-nums">{{ r.rating }}</div>
+            <div class="font-display text-xl tabular-nums">{{ r.points.toLocaleString() }}</div>
             <div class="text-xs text-muted">{{ r.wins }}W {{ r.losses }}L</div>
           </div>
         </div>

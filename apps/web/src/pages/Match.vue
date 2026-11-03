@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { BadgeCheck, FlaskConical, Hourglass, Radio, Trophy } from 'lucide-vue-next';
+import { BadgeCheck, FlaskConical, Hourglass, Map as MapIcon, Radio, Trophy } from 'lucide-vue-next';
 import { api } from '../lib/api';
 import { duration, dateShort } from '../lib/format';
 import { useHeroes } from '../stores/heroes';
@@ -79,6 +79,7 @@ async function submit() {
       <PageHeader :eyebrow="m.pug ? `PUG #${m.pug.number}` : 'Match'" :title="`Match ${m.deadlockMatchId ?? m.id.slice(-6)}`">
         <StatusBadge :status="m.trackingState" /><SimBadge v-if="m.isSimulated" />
         <RouterLink :to="`/matches/${matchId}/live`" class="btn-ghost !h-9"><Radio class="w-4 h-4" />Live view</RouterLink>
+        <RouterLink v-if="m.result && m.deadlockMatchId && !m.isSimulated" :to="`/matches/${matchId}/replay`" class="btn-ghost !h-9"><MapIcon class="w-4 h-4" />Replay</RouterLink>
       </PageHeader>
 
       <!-- Scoreline banner -->
