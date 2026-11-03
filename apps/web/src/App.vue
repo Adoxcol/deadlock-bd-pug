@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { LayoutDashboard, Swords, Crosshair, Trophy, Shield, LogOut, Wifi, WifiOff, Radio, Plus, MessageCircle } from 'lucide-vue-next';
 import { useSession } from './stores/session';
@@ -8,6 +8,9 @@ import Logo from './components/Logo.vue';
 
 const session = useSession();
 const route = useRoute();
+const navEl = ref<HTMLElement | null>(null);
+// Keep the current page's ticket in view on the swipeable phone row.
+watch(() => route.path, () => nextTick(() => navEl.value?.querySelector('[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })));
 const bare = computed(() => route.query.broadcast === '1');
 const landing = computed(() => route.path === '/' && !session.user);
 const wide = computed(() => route.path.startsWith('/draft/'));
@@ -29,8 +32,8 @@ const initial = computed(() => session.user?.displayName.replace('[SIM] ', '').c
     <header class="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur">
       <div class="min-h-16 px-4 lg:px-6 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <RouterLink to="/" aria-label="Home" class="shrink-0"><Logo /></RouterLink>
-        <!-- Full second row until the tickets fit beside the logo; then they join the main bar. -->
-        <nav class="order-last flex w-full flex-wrap items-center gap-2 min-[1680px]:order-none min-[1680px]:w-auto" aria-label="Main">
+        <!-- Full second row until the tickets fit beside the logo; then they join the main bar. On phones the row swipes sideways so the sticky header stays short. -->
+        <nav ref="navEl" class="order-last -mx-4 flex w-[calc(100%+2rem)] items-center gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:mx-0 md:w-full md:flex-wrap md:overflow-visible md:px-0 min-[1680px]:order-none min-[1680px]:w-auto" aria-label="Main">
           <RouterLink v-for="n in nav" :key="n.to" :to="n.to" :aria-current="isActive(n.to) ? 'page' : undefined" :class="['nav-tab', isActive(n.to) && 'nav-tab-active']">
             <component :is="n.icon" class="w-3.5 h-3.5 shrink-0" :stroke-width="2.25" />{{ n.label }}
           </RouterLink>
