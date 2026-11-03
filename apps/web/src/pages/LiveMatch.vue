@@ -51,6 +51,9 @@ const who = (idx: unknown) => st.value?.players?.[Number(idx)] ?? null;
 const heroName = (heroId: number | null | undefined) => heroes.byId(heroId ?? -1)?.name ?? 'Unknown';
 const heroSrc = (heroId: number | null | undefined) => heroes.byId(heroId ?? -1)?.imageUrl;
 const mapDots = computed(() => (live.value?.map ?? []).map((d: { heroId: number | null; team: number | null; x: number; y: number }) => ({ ...d, label: `${d.team === 2 ? 'Amber' : d.team === 3 ? 'Sapphire' : 'Player'} · ${heroes.byId(d.heroId)?.name ?? 'Unknown hero'}` })));
+const latest = computed(() => [...(st.value?.timeline ?? [])].reverse().slice(0, 4) as any[]);
+const ringOf = (t?: number) => (t === 2 ? 'ring-amber-team' : t === 3 ? 'ring-sapphire-team' : 'ring-line');
+const textOf = (t?: number) => (t === 2 ? 'text-amber-team' : t === 3 ? 'text-sapphire-team' : '');
 const icon = (k: string) => ({ kill: Skull, objective: Castle, pause: Pause, resume: Play, end: Flag } as any)[k];
 
 async function load() {
@@ -79,27 +82,27 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
       <!-- Header -->
       <div class="flex flex-wrap items-center gap-3">
         <div class="min-w-0">
-          <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted">{{ match.pug ? `PUG #${match.pug.number}` : 'Match' }} · Live</div>
-          <div class="flex items-center gap-2 flex-wrap mt-1"><h1 class="text-3xl sm:text-4xl leading-none">Match {{ match.deadlockMatchId ?? match.id.slice(-6) }}</h1><StatusBadge :status="status" /><SimBadge v-if="match.isSimulated" /></div>
+          <div class="font-mono text-[11px] font-bold uppercase tracking-[0.3em] text-muted">{{ match.pug ? `PUG #${match.pug.number}` : 'Match' }} · {{ match.deadlockMatchId ?? match.id.slice(-6) }}</div>
+          <div class="flex items-center gap-2 flex-wrap mt-1"><h1 class="text-2xl sm:text-4xl leading-none break-words min-w-0">{{ teamName(2) }} vs {{ teamName(3) }}</h1><StatusBadge :status="status" /><SimBadge v-if="match.isSimulated" /></div>
         </div>
-        <div class="ml-auto flex flex-wrap items-center gap-2">
-          <button v-if="session.can('MODERATOR')" class="btn-ghost !h-9" @click="toggleView"><ShieldCheck class="w-4 h-4" />{{ modView ? 'Moderator view' : 'Public view' }}</button>
-          <RouterLink v-if="status === 'completed' || session.can('MODERATOR')" :to="`/matches/${matchId}`" class="btn-primary !h-9">{{ status === 'completed' ? 'Results' : 'Submit result' }}</RouterLink>
+        <div class="w-full sm:w-auto sm:ml-auto flex items-center gap-2">
+          <button v-if="session.can('MODERATOR')" class="btn-ghost !h-9 flex-1 min-w-0 sm:flex-none !px-2 sm:!px-4 !text-xs sm:!text-sm whitespace-nowrap" @click="toggleView"><ShieldCheck class="w-4 h-4" />{{ modView ? 'Moderator view' : 'Public view' }}</button>
+          <RouterLink v-if="status === 'completed' || session.can('MODERATOR')" :to="`/matches/${matchId}`" class="btn-primary !h-9 flex-1 min-w-0 sm:flex-none !px-2 sm:!px-5 !text-xs sm:!text-sm whitespace-nowrap">{{ status === 'completed' ? 'Results' : 'Submit result' }}</RouterLink>
         </div>
       </div>
 
       <!-- Score banner -->
       <section class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-6 border border-line/70 px-4 sm:px-6 py-4 bg-[linear-gradient(90deg,rgba(232,163,58,.16),rgba(14,12,10,.6)_42%,rgba(14,12,10,.6)_58%,rgba(90,143,224,.16))]">
         <div v-for="(t, i) in [2, 3]" :key="t" :class="['min-w-0', i === 1 && 'order-3']">
-          <div :class="['flex items-center gap-2 sm:gap-3', i === 1 && 'flex-row-reverse text-right']">
+          <div :class="['flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3', i === 1 ? 'items-end sm:flex-row-reverse text-right' : 'items-start']">
             <TeamCrest :team="sideOf(t)" :size="44" class="shrink-0 hidden sm:block" />
             <div class="min-w-0">
-              <div :class="['font-display text-lg sm:text-2xl uppercase truncate', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</div>
+              <div :class="['font-display text-sm sm:text-2xl uppercase break-words sm:truncate', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</div>
               <div class="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-muted">{{ players(t).length }} players</div>
             </div>
-            <div :class="['shrink-0 font-display text-4xl sm:text-6xl tabular-nums leading-none', i === 1 ? 'mr-auto' : 'ml-auto', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ st?.teams?.[String(t)]?.score ?? '–' }}</div>
+            <div :class="['shrink-0 font-display text-4xl sm:text-6xl tabular-nums leading-none', i === 1 ? 'sm:mr-auto' : 'sm:ml-auto', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ st?.teams?.[String(t)]?.score ?? '–' }}</div>
           </div>
-          <div :class="['mt-1.5', i === 1 ? 'text-left' : 'text-right']">
+          <div :class="['mt-1.5', i === 1 ? 'text-right sm:text-left' : 'text-left sm:text-right']">
             <div class="inline-block text-center">
               <div :class="['font-mono text-xs sm:text-sm font-bold tabular-nums leading-none', t === 2 ? 'text-amber-team' : 'text-sapphire-team']"><Metric :value="teamSouls(t)" :reason="modView ? undefined : 'Hidden on the public scoreboard'" /></div>
               <div class="mt-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-muted">souls</div>
@@ -119,7 +122,26 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
       </div>
       <div v-if="stale && status !== 'completed'" class="card border-warn/40 px-4 py-2 text-sm text-warn flex items-center gap-2" role="status"><AlertTriangle class="w-4 h-4" />Data may be stale — no update received in over 15 seconds.</div>
 
-      <LiveMap :dots="mapDots" :delayed="!modView && (live?.publicDelaySec ?? 0) > 0" :unavailable="match.trackingState === 'LIVE_UNAVAILABLE'" />
+      <section v-if="latest.length" class="card-ornate p-4" aria-label="Latest moments">
+        <h2 class="h-section text-lg mb-2">Latest</h2>
+        <ol class="grid md:grid-cols-2 gap-2">
+          <li v-for="e in latest" :key="e.key" class="flex items-center gap-2 min-w-0 text-sm bg-raised/40 px-2.5 py-2">
+            <span class="shrink-0 font-mono text-xs text-muted tabular-nums">{{ duration(e.gameTime) }}</span>
+            <template v-if="e.kind === 'kill'">
+              <HeroCard size="xs" :class="['shrink-0 ring-2', ringOf(who(e.detail.attacker)?.team)]" :name="heroName(who(e.detail.attacker)?.heroId)" :src="heroSrc(who(e.detail.attacker)?.heroId)" />
+              <Skull class="w-3.5 h-3.5 shrink-0 text-danger" aria-label="killed" />
+              <HeroCard size="xs" class="shrink-0 grayscale opacity-50" :name="heroName(who(e.detail.victim)?.heroId)" :src="heroSrc(who(e.detail.victim)?.heroId)" />
+              <span class="break-words min-w-0"><span :class="['font-semibold', textOf(who(e.detail.attacker)?.team)]">{{ heroName(who(e.detail.attacker)?.heroId) }}</span> <span class="text-muted">killed {{ heroName(who(e.detail.victim)?.heroId) }}</span></span>
+            </template>
+            <template v-else>
+              <component :is="icon(e.kind)" class="w-4 h-4 shrink-0 text-primary" />
+              <span class="truncate min-w-0">{{ e.kind === 'objective' ? 'Objective destroyed' : e.kind === 'end' ? 'Match completed' : `Game ${e.kind}d` }}</span>
+            </template>
+          </li>
+        </ol>
+      </section>
+
+      <LiveMap v-if="mapDots.length" :dots="mapDots" :delayed="!modView && (live?.publicDelaySec ?? 0) > 0" :unavailable="match.trackingState === 'LIVE_UNAVAILABLE'" />
 
       <!-- Tabs -->
       <div class="flex gap-1 border-b border-line">
@@ -172,11 +194,11 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
             <li v-for="e in [...st.timeline].reverse()" :key="e.key" class="flex items-center gap-2.5 text-sm py-1.5 border-b border-line/40 animate-fade-up min-w-0">
               <span class="w-12 shrink-0 font-mono text-xs text-muted tabular-nums">{{ duration(e.gameTime) }}</span>
               <template v-if="e.kind === 'kill'">
-                <HeroCard size="xs" class="shrink-0" :name="heroName(who(e.detail.attacker)?.heroId)" :src="heroSrc(who(e.detail.attacker)?.heroId)" />
-                <span class="font-semibold truncate">{{ who(e.detail.attacker)?.name ?? 'Someone' }}</span>
+                <HeroCard size="xs" :class="['shrink-0 ring-2', ringOf(who(e.detail.attacker)?.team)]" :name="heroName(who(e.detail.attacker)?.heroId)" :src="heroSrc(who(e.detail.attacker)?.heroId)" />
+                <span :class="['font-semibold truncate', textOf(who(e.detail.attacker)?.team)]">{{ who(e.detail.attacker)?.name ?? 'Someone' }}</span>
                 <span class="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-danger">killed</span>
-                <HeroCard size="xs" class="shrink-0" :name="heroName(who(e.detail.victim)?.heroId)" :src="heroSrc(who(e.detail.victim)?.heroId)" />
-                <span class="font-semibold truncate">{{ who(e.detail.victim)?.name ?? 'Someone' }}</span>
+                <HeroCard size="xs" class="shrink-0 grayscale opacity-50" :name="heroName(who(e.detail.victim)?.heroId)" :src="heroSrc(who(e.detail.victim)?.heroId)" />
+                <span class="truncate text-muted">{{ who(e.detail.victim)?.name ?? 'Someone' }}</span>
               </template>
               <template v-else>
                 <component :is="icon(e.kind)" :class="['w-4 h-4 shrink-0', e.kind === 'objective' ? 'text-primary' : 'text-muted']" />
