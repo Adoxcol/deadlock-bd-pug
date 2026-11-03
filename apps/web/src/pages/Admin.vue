@@ -8,10 +8,11 @@ import { dateShort } from '../lib/format';
 import { useSession } from '../stores/session';
 import PageState from '../components/PageState.vue';
 import PageHeader from '../components/PageHeader.vue';
+import MatchImport from '../components/MatchImport.vue';
 const session = useSession();
 const router = useRouter();
 async function createPug() { const p = await api<{ id: string }>('/pugs', { method: 'POST', body: pug }); await router.push(`/pugs/${p.id}`); }
-const tab = ref<'pug' | 'users' | 'seasons' | 'discord' | 'health' | 'audit'>('pug');
+const tab = ref<'pug' | 'import' | 'users' | 'seasons' | 'discord' | 'health' | 'audit'>('pug');
 const msg = ref<string | null>(null);
 const users = ref<any[]>([]); const seasons = ref<any[]>([]); const audit = ref<any[]>([]); const health = ref<any>(null); const notes = ref<any[]>([]);
 const pug = reactive({ format: '6v6', amberName: 'Team Amber', sapphireName: 'Team Sapphire' });
@@ -24,7 +25,7 @@ async function load() {
   if (session.can('ADMIN')) { audit.value = await api('/admin/audit').catch(() => []) as any[]; health.value = await api('/admin/health').catch(() => null); notes.value = await api('/admin/notifications').catch(() => []) as any[]; }
 }
 onMounted(load);
-const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'users', l: 'Users & roles', min: 'ADMIN' }, { k: 'seasons', l: 'Seasons', min: 'ADMIN' }, { k: 'discord', l: 'Discord', min: 'ADMIN' }, { k: 'health', l: 'System health', min: 'ADMIN' }, { k: 'audit', l: 'Audit log', min: 'ADMIN' }] as const;
+const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'import', l: 'Import match', min: 'MODERATOR' },{ k: 'users', l: 'Users & roles', min: 'ADMIN' }, { k: 'seasons', l: 'Seasons', min: 'ADMIN' }, { k: 'discord', l: 'Discord', min: 'ADMIN' }, { k: 'health', l: 'System health', min: 'ADMIN' }, { k: 'audit', l: 'Audit log', min: 'ADMIN' }] as const;
 </script>
 <template>
   <div v-if="!session.can('MODERATOR')" class="card-ornate p-6 text-sm text-muted max-w-xl mx-auto">Moderator access required.</div>
@@ -43,6 +44,8 @@ const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'users', l
       <div><label class="label" for="ps">Sapphire name</label><input id="ps" v-model="pug.sapphireName" class="input" /></div>
       <button class="btn-primary">Create PUG</button>
     </form>
+
+    <MatchImport v-else-if="tab === 'import'" />
 
     <div v-else-if="tab === 'users'" class="card-ornate overflow-x-auto"><table class="w-full table-compact"><thead><tr><th>User</th><th>Role</th></tr></thead>
       <tbody><tr v-for="u in users" :key="u.id" class="hover:bg-raised/50"><td><RouterLink :to="`/players/${u.id}`" class="font-semibold hover:text-primary">{{ u.displayName }}</RouterLink></td><td class="w-56">

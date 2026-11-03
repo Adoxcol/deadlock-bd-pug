@@ -12,13 +12,14 @@ export function matchPoints(s: PointsInput): number {
 }
 
 export const STARTING_RATING = 1200;
-export const RANKS: Array<[number, string]> = [[1700, 'Eternus'], [1500, 'Archon'], [1300, 'Arcanist'], [1100, 'Alchemist'], [900, 'Seeker'], [0, 'Initiate']];
-export const rankOf = (rating: number) => RANKS.find(([min]) => rating >= min)![1];
+/** Matches that calibrate a rating. It stays hidden until then, but already counts towards team averages. */
+export const CALIBRATION_MATCHES = 5;
 
-/** Average points per match x20, pulled toward the starting rating until a player has a few games. */
+/** Average points per match x20. Unplayed calibration matches count at the starting rating, so it is purely the player's own from match 5 on. */
 export function skillRating(rows: PointsInput[]): number {
   const total = rows.reduce((n, r) => n + basePoints(r), 0);
-  return Math.round(((total + 5 * (STARTING_RATING / 20)) / (rows.length + 5)) * 20);
+  const unplayed = Math.max(0, CALIBRATION_MATCHES - rows.length);
+  return Math.round(((total + unplayed * (STARTING_RATING / 20)) / (rows.length + unplayed)) * 20);
 }
 
 /** The lower-rated team earns +1 per 10 rating of average gap, up to 20, or half that if it loses. */

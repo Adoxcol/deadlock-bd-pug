@@ -9,13 +9,15 @@ Each match a player earns, rounded to the nearest whole number and never below 0
 - Unlinked players (guests) earn nothing. Imported players get a placeholder account holding their Steam ID; when its owner links that Steam account, its matches move to them.
 - Team Elo is still recorded on `PlayerRating` and `RatingTransaction` but is no longer shown.
 
-## Rating and ranks
-- Rating = average base points per match x 20, blended with 5 games at the starting rating of 1200. Bonuses are excluded, so they can't feed back into rating.
-- Ranks: Initiate under 900, Seeker 900, Alchemist 1100, Arcanist 1300, Archon 1500, Eternus 1700.
+## Rating
+- Rating = average base points per match x 20. Bonuses are excluded, so they can't feed back into rating.
+- The first 5 rated matches calibrate it: any not yet played count at the starting rating of 1200, so from match 5 on it is purely the player's own average.
+- A rating is shown as "Unrated" during calibration. It still counts towards team totals and the underdog bonus.
 - Team building shows each player's rating and the team total.
+- There are no rank tiers. Rating is separate from in-game rank.
 
 ## Underdog bonus
 - The average rating of each team is stored on `MatchResult` when the result is recorded. Results with no stored ratings, such as imported matches, pay no bonus.
 - The lower-rated team earns +1 point per 10 rating of average gap, up to +20, or half that if it loses. The favourite loses nothing.
 
-PUG ranks use Deadlock rank names and badges but are separate from in-game rank, and the site says so.
+Moderators add finished matches from Admin → Import match. Later matches' team ratings are recalculated, because a late import changes what those teams had going in.

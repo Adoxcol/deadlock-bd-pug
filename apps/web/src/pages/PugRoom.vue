@@ -14,15 +14,14 @@ import TeamNameInput from '../components/pug/TeamNameInput.vue';
 import TossPanel from '../components/pug/TossPanel.vue';
 import PickBoard from '../components/pug/PickBoard.vue';
 import { rememberReturn } from '../lib/returnTo';
-import RankIcon from '../components/RankIcon.vue';
-import { STARTING_RATING, rankOf, underdogBonus } from '../../../server/src/rating/points';
+import { CALIBRATION_MATCHES, STARTING_RATING, underdogBonus } from '../../../server/src/rating/points';
 import { defaultTeamName, pickingCaptain, type Formation, type FormationCommand, type CaptainSeat } from '../../../server/src/draft/formation';
 
 const props = defineProps<{ pugId: string }>();
 const session = useSession();
 const router = useRouter();
 const route = useRoute();
-const room = ref<{ id: string; name: string | null; code: string | null; invites: { captainA: string; captainB: string; player: string } | null; inviteRole: 'captainA' | 'captainB' | 'player' | null; number: number; format: string; settings: LobbyRules | null; status: string; isSimulated: boolean; formation: Formation | null; participants: { userId: string; user: { displayName: string } }[]; ratings: Record<string, { rating: number; rank: string }> } | null>(null);
+const room = ref<{ id: string; name: string | null; code: string | null; invites: { captainA: string; captainB: string; player: string } | null; inviteRole: 'captainA' | 'captainB' | 'player' | null; number: number; format: string; settings: LobbyRules | null; status: string; isSimulated: boolean; formation: Formation | null; participants: { userId: string; user: { displayName: string } }[]; ratings: Record<string, { rating: number; matches: number }> } | null>(null);
 const error = ref<string | null>(null);
 const actionError = ref<string | null>(null);
 const pending = ref(false);
@@ -38,6 +37,7 @@ const canSkip = computed(() => full.value && state.value?.teams.a.length === siz
 const orderedSeats = computed(() => [...seats].sort((a, b) => (state.value?.sides[a] === 'amber' ? -1 : 1) - (state.value?.sides[b] === 'amber' ? -1 : 1)));
 const name = (id: string | null) => room.value?.participants.find((p) => p.userId === id)?.user.displayName ?? 'Open seat';
 const rating = (id: string) => room.value?.ratings[id]?.rating ?? STARTING_RATING;
+const ratingLabel = (id: string) => ((room.value?.ratings[id]?.matches ?? 0) >= CALIBRATION_MATCHES ? String(rating(id)) : 'Unrated');
 const teamTotal = (t: CaptainSeat) => (state.value?.teams[t] ?? []).reduce((n, id) => n + rating(id), 0);
 // What a win would pay, shown once both teams have the same number of players.
 const teamBonus = (t: CaptainSeat) => {
@@ -63,7 +63,7 @@ const picking = computed(() => invited.value && active.value && state.value?.pha
 const clean = (n: string) => n.replace('[SIM] ', '');
 const boardTeams = computed(() => orderedSeats.value.map((t) => ({
   seat: t, total: teamTotal(t), bonus: teamBonus(t), side: state.value!.sides[t], name: teamName(t), customName: state.value!.teamNames?.[t] ?? '', defaultName: defaultTeamName(captainName(t)),
-  players: state.value!.teams[t].map((id) => ({ id, name: clean(name(id)), rating: rating(id), isCaptain: id === state.value!.captains[t], isMe: id === me.value })),
+  players: state.value!.teams[t].map((id) => ({ id, name: clean(name(id)), rating: ratingLabel(id), isCaptain: id === state.value!.captains[t], isMe: id === me.value })),
   picking: pickingCaptain(state.value!) === t, mine: seat.value === t,
 })));
 const rulesText = computed(() => {
@@ -74,7 +74,7 @@ const seatRows = computed(() => seats.map((t) => {
   const id = state.value?.captains[t] ?? null;
   return { team: id ? teamName(t) : null, customTeam: state.value?.teamNames?.[t] ?? '', defaultTeam: id ? defaultTeamName(name(id)) : '', key: t, label: `Captain ${t.toUpperCase()}`, name: id ? name(id) : null, isMe: !!id && id === me.value, canTake: !id && !!room.value?.invites && !seat.value && !!waiting.value };
 }));
-const pool = computed(() => (state.value?.players ?? []).filter((id) => id !== state.value?.captains.a && id !== state.value?.captains.b).map((id) => ({ id, name: name(id), isMe: id === me.value, rating: rating(id), rank: rankOf(rating(id)) })));
+const pool = computed(() => (state.value?.players ?? []).filter((id) => id !== state.value?.captains.a && id !== state.value?.captains.b).map((id) => ({ id, name: name(id), isMe: id === me.value, rating: ratingLabel(id) })));
 const poolSlots = computed(() => size.value * 2 - 2);
 const showTeams = ref(false);
 const waitingText = computed(() => {
@@ -163,7 +163,7 @@ onUnmounted(() => clearInterval(timer));
           @first="command({ kind: 'choice', advantage: 'first' })"
           @side="(side) => state!.phase === 'choice' ? command({ kind: 'choice', advantage: 'side', side }) : command({ kind: 'side', side })" />
 
-        <PickBoard v-if="picking" :teams="boardTeams" :size="size" :pool="available.map((id) => ({ id, name: clean(name(id)), rating: rating(id) }))" :can-pick="seat === pickingCaptain(state)" :pending="pending"
+        <PickBoard v-if="picking" :teams="boardTeams" :size="size" :pool="available.map((id) => ({ id, name: clean(name(id)), rating: ratingLabel(id) }))" :can-pick="seat === pickingCaptain(state)" :pending="pending"
           :pick-number="state.picks.length + 1" :total-picks="size * 2 - 2" :turn-name="teamName(pickingCaptain(state)!)"
           @pick="(userId) => command({ kind: 'pick', userId })" @team-name="(n) => command({ kind: 'teamName', name: n })" />
 
@@ -233,7 +233,7 @@ onUnmounted(() => clearInterval(timer));
             <p class="text-sm break-words">Captain: {{ name(state.captains[t]) }}</p>
             <TeamNameInput v-if="invited && active && seat === t" :value="state.teamNames?.[t] ?? ''" :placeholder="defaultTeamName(name(state.captains[t]))" label="Team name" @save="(n) => command({ kind: 'teamName', name: n })" />
             <ul class="divide-y divide-line text-sm">
-              <li v-for="id in state.teams[t]" :key="id" class="py-2 break-words flex justify-between gap-3"><span>{{ name(id) }} <span v-if="id === me" class="text-muted">(you)</span></span><span class="font-mono text-xs tabular-nums text-muted"><RankIcon :rank="rankOf(rating(id))" :size="16" /> {{ rating(id) }}</span></li>
+              <li v-for="id in state.teams[t]" :key="id" class="py-2 break-words flex justify-between gap-3"><span>{{ name(id) }} <span v-if="id === me" class="text-muted">(you)</span></span><span class="font-mono text-xs tabular-nums text-muted">{{ ratingLabel(id) }}</span></li>
             </ul>
             <div v-if="active && state.phase === 'waiting' && joined" class="flex flex-wrap gap-2">
               <button v-if="!invited && !seat && !state.captains[t]" class="btn-ghost" :disabled="pending" @click="command({ kind: 'captain', seat: t })">Become captain</button>
@@ -248,7 +248,7 @@ onUnmounted(() => clearInterval(timer));
           <p v-if="!available.length" class="text-sm text-muted">{{ state.phase === 'waiting' ? 'Players can join the pool above or arrange teams below the captain seats.' : 'No unassigned players.' }}</p>
           <ul class="divide-y divide-line">
             <li v-for="id in available" :key="id" class="flex items-center justify-between gap-3 py-3">
-              <span class="text-sm break-words min-w-0">{{ name(id) }} <span class="font-mono text-xs tabular-nums text-muted">{{ rating(id) }}</span></span>
+              <span class="text-sm break-words min-w-0">{{ name(id) }} <span class="font-mono text-xs tabular-nums text-muted">{{ ratingLabel(id) }}</span></span>
               <button v-if="active && state.phase === 'picking' && seat === pickingCaptain(state)" class="btn-primary shrink-0" :disabled="pending" :aria-label="`Pick ${name(id)}`" @click="command({ kind: 'pick', userId: id })">Pick</button>
             </li>
           </ul>

@@ -8,9 +8,7 @@ import PageState from '../components/PageState.vue';
 import PageHeader from '../components/PageHeader.vue';
 import SimBadge from '../components/SimBadge.vue';
 import HeroCard from '../components/HeroCard.vue';
-import RankIcon from '../components/RankIcon.vue';
 import { useHeroes } from '../stores/heroes';
-import { RANKS } from '../../../server/src/rating/points';
 
 const heroes = useHeroes();
 const data = ref<any>(null);
@@ -26,7 +24,6 @@ async function load() {
 onMounted(async () => { heroes.load().catch(() => {}); seasons.value = await api('/seasons').catch(() => []) as any[]; load(); });
 watch([seasonId, minMatches], load);
 const pointRules = [['+30', 'Win'], ['+10', 'Loss'], ['+2', 'Per kill'], ['+1', 'Per assist'], ['−1', 'Per death'], ['+1', 'Per 2,000 souls'], ['+20', 'Max underdog bonus']];
-const rankTiers = [...RANKS].reverse();
 const avg = (x: number | null | undefined) => (x == null ? '—' : x.toFixed(1));
 const heroByName = (n: string | null) => (n ? heroes.list.find((h) => h.name === n) : undefined);
 const rows = computed(() => (data.value?.rows ?? []).filter((r: any) => !hero.value || (r.mostPlayedHero ?? '').toLowerCase().includes(hero.value.toLowerCase())));
@@ -59,7 +56,7 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
           <div class="w-12 sm:w-14 my-3"><HeroCard :name="r.mostPlayedHero ?? r.displayName" :src="heroByName(r.mostPlayedHero)?.imageUrl" /></div>
           <div class="font-display uppercase truncate max-w-full text-sm sm:text-base">{{ r.displayName }}</div>
           <div class="font-display text-2xl tabular-nums text-text mt-1">{{ r.points.toLocaleString() }}</div>
-          <div class="flex items-center justify-center gap-1.5 font-mono text-xs tabular-nums text-muted"><RankIcon :rank="r.tier" :size="20" />{{ r.rating }}</div>
+          <div class="font-mono text-xs tabular-nums text-muted">{{ r.rating ?? 'Unrated' }}</div>
           <div class="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{{ r.wins }}W · {{ r.losses }}L · {{ pct(r.winRate) }}</div>
         </RouterLink>
       </div>
@@ -72,7 +69,7 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
               <td><span :class="['font-display text-lg tabular-nums', r.rank === 1 ? 'text-primary' : r.rank <= 3 ? 'text-text' : 'text-muted']">{{ r.rank }}</span></td>
               <td><RouterLink :to="`/players/${r.userId}`" class="font-semibold hover:text-primary">{{ r.displayName }}</RouterLink></td>
               <td class="text-right font-display text-base tabular-nums">{{ r.points.toLocaleString() }}</td>
-              <td class="text-right tabular-nums"><span class="inline-flex items-center gap-1.5"><RankIcon :rank="r.tier" /><span class="font-display">{{ r.rating }}</span></span></td>
+              <td class="text-right tabular-nums"><span v-if="r.rating != null" class="font-display">{{ r.rating }}</span><span v-else class="text-xs text-muted">Unrated</span></td>
               <td class="text-right tabular-nums text-accent">{{ r.wins }}</td><td class="text-right tabular-nums text-danger">{{ r.losses }}</td>
               <td class="text-right tabular-nums">{{ pct(r.winRate) }}</td><td class="text-right tabular-nums hidden sm:table-cell">{{ r.matches }}</td>
               <td class="text-right tabular-nums hidden md:table-cell font-mono text-xs">{{ avg(r.avg?.kills) }} / {{ avg(r.avg?.deaths) }} / {{ avg(r.avg?.assists) }}</td>
@@ -82,7 +79,7 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
         </table>
       </div>
     </PageState>
-    <section class="card-ornate p-4 sm:p-5 space-y-4" aria-label="How points and ranks work">
+    <section class="card-ornate p-4 sm:p-5 space-y-4" aria-label="How points and rating work">
       <h2 class="h-section">How points work</h2>
       <dl class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         <div v-for="[value, label] in pointRules" :key="label" class="border border-line/70 bg-bg/60 p-3">
@@ -91,15 +88,7 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
         </div>
       </dl>
       <p class="text-xs text-muted">A match never costs you points, and only verified results count. The lower-rated team earns +1 per 10 rating of average gap, or half that if it loses.</p>
-      <h2 class="h-section pt-1">Ranks</h2>
-      <ol class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <li v-for="[min, label] in rankTiers" :key="label" class="border border-line/70 bg-bg/60 p-3">
-          <RankIcon :rank="label" :size="40" class="mb-2" />
-          <div class="font-display uppercase">{{ label }}</div>
-          <div class="font-mono text-xs tabular-nums text-muted">{{ min ? `${min}+` : 'Under 900' }}</div>
-        </li>
-      </ol>
-      <p class="text-xs text-muted">These are PUG ranks, separate from your in-game Deadlock rank. Rating is your average points per match ×20, without bonuses. New players start at 1200 and it settles over about five games.</p>
+      <p class="text-xs text-muted">Rating is your average points per match ×20, without bonuses. Your first 5 rated matches calibrate it, then your rating is revealed. It is separate from your in-game Deadlock rank.</p>
     </section>
   </div>
 </template>

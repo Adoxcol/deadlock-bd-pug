@@ -19,12 +19,13 @@ import { PrismaDraftStore, syncHeroes } from './db/draftStore.js';
 import { PrismaResultsRepo } from './db/resultsRepo.js';
 import { audit } from './db/audit.js';
 import { processResult } from './results/process.js';
-import { matchPoints, rankOf, skillRating, standings, underdogBonus } from './rating/points.js';
+import { CALIBRATION_MATCHES, matchPoints, skillRating, standings, underdogBonus } from './rating/points.js';
 import { RedisSessionStore, MemorySessionStore, type SessionStore } from './auth/session.js';
 import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
 import { steamLoginUrl, verifySteamAssertion } from './auth/steam.js';
 import { linkSteam } from './auth/linkSteam.js';
+import { importMatch, previewMatchImport } from './results/importMatch.js';
 import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
 import { normalizeReplay } from './tracker/replay.js';
 import { matchPlayers, normalizeMetadata, simulateDetails } from './tracker/matchStats.js';
@@ -127,9 +128,10 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   }
   /** Match rows hold the party code (lets anyone into the game) and the webhook secret hash: never send those. */
   const withBonus = <T extends { team: 'AMBER' | 'SAPPHIRE'; won: boolean }>(s: T, r: { amberRating: number | null; sapphireRating: number | null }) => ({ ...s, bonus: underdogBonus(s.team, s.won, r.amberRating, r.sapphireRating) });
+  const shownRating = (s: { rating: number; matches: number }) => (s.matches >= CALIBRATION_MATCHES ? s.rating : null);
   const ratingsFor = async (userIds: string[]) => {
     const rows = await db.playerStatistic.findMany({ where: { userId: { in: userIds }, result: { rated: true } }, select: { userId: true, won: true, kills: true, deaths: true, assists: true, netWorth: true } });
-    return new Map(userIds.map((id) => { const rating = skillRating(rows.filter((r) => r.userId === id)); return [id, { rating, rank: rankOf(rating) }] as const; }));
+    return new Map(userIds.map((id) => { const mine = rows.filter((r) => r.userId === id); return [id, { rating: skillRating(mine), matches: mine.length }] as const; }));
   };
   // The leaderboard is derived from match stats: only rated results count, private profiles are hidden.
   const seasonStandings = async (seasonId: string) => {
@@ -653,8 +655,18 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     }
     return { resolution: out, match: match && publicMatch(match) };
   });
-  app.get('/api/matches', async () => {
-    const rows = await db.match.findMany({ orderBy: { createdAt: 'desc' }, take: 50, include: { result: { include: { stats: true } }, pug: { include: { teams: true } } } });
+  const matchIdParam = z.string().regex(/^\d{1,20}$/, 'Enter a numeric Match ID.');
+  app.get('/api/admin/match-import/:matchId', { preHandler: requireRole('MODERATOR') }, async (req) => previewMatchImport(db, api, matchIdParam.parse((req.params as { matchId: string }).matchId)));
+  app.post('/api/admin/match-import', { preHandler: requireRole('MODERATOR') }, async (req) => {
+    const b = z.object({ matchId: matchIdParam, names: z.record(z.string().trim().min(1).max(32)) }).parse(req.body);
+    const out = await importMatch(db, api, { ...b, verifiedById: req.user!.id });
+    await audit(db, req.user!.id, 'match.import', 'Match', out.id, null, { deadlockMatchId: b.matchId, players: out.players });
+    return out;
+  });
+  app.get('/api/matches', async (req) => {
+    // Simulated matches stay out unless asked for, so they can't push real ones off the list.
+    const withSimulated = (req.query as { simulated?: string }).simulated === '1';
+    const rows = await db.match.findMany({ where: withSimulated ? {} : { isSimulated: false }, orderBy: { createdAt: 'desc' }, take: 50, include: { result: { include: { stats: true } }, pug: { include: { teams: true } } } });
     const when = (m: { startedAt: Date | null; createdAt: Date }) => (m.startedAt ?? m.createdAt).getTime();
     // Imported matches are created together, so order by when they were played.
     return rows.sort((a, b) => when(b) - when(a)).map((m) => publicMatch({ ...m, result: m.result && { ...m.result, stats: m.result.stats.map(({ details: _d, ...s }) => ({ ...s, points: m.result!.rated ? matchPoints(withBonus(s, m.result!)) : null })) } }));
@@ -737,7 +749,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const fav = new Map<string, { heroId: number; n: number }>();
     for (const h of heroCounts) { const c = fav.get(h.userId!); if (!c || h._count > c.n) fav.set(h.userId!, { heroId: h.heroId!, n: h._count }); }
     return { season: { id: season.id, name: season.name, isSimulated: season.isSimulated }, rows: rows.map((r, i) => ({
-      rank: i + 1, userId: r.userId, displayName: r.user.displayName, points: r.points, rating: skill.get(r.userId)!.rating, tier: skill.get(r.userId)!.rank, wins: r.wins, losses: r.losses, matches: r.matches,
+      rank: i + 1, userId: r.userId, displayName: r.user.displayName, points: r.points, rating: shownRating(skill.get(r.userId)!), wins: r.wins, losses: r.losses, matches: r.matches,
       winRate: r.matches ? r.wins / r.matches : null, avg: sMap.get(r.userId) ?? null, mostPlayedHero: fav.get(r.userId) ? heroName(fav.get(r.userId)!.heroId) : null,
     })) };
   });
@@ -757,7 +769,8 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const seasons = seasonRows.map((season) => ({ season, ...standings(scored.filter((s) => s.result.seasonId === season.id).map((s) => withBonus(s, s.result)))[0]! }));
     const active = scored.filter((s) => seasonRows.find((x) => x.id === s.result.seasonId)?.isActive);
     const pointsHistory = active.map((_, i) => standings(active.slice(0, i + 1).map((s) => withBonus(s, s.result)))[0]!.points);
-    return { skill: (await ratingsFor([id])).get(id), user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
+    const skill = (await ratingsFor([id])).get(id)!;
+    return { skill: { rating: shownRating(skill), matches: skill.matches, calibration: CALIBRATION_MATCHES }, user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
   });
   app.patch('/api/me/visibility', { preHandler: requireRole('SPECTATOR') }, async (req) => {
     const b = z.object({ visibility: z.enum(['PUBLIC', 'MEMBERS', 'PRIVATE']) }).parse(req.body);

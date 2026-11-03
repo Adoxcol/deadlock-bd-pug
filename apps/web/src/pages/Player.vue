@@ -12,7 +12,6 @@ import Metric from '../components/Metric.vue';
 import SimBadge from '../components/SimBadge.vue';
 import StatTile from '../components/StatTile.vue';
 import HeroCard from '../components/HeroCard.vue';
-import RankIcon from '../components/RankIcon.vue';
 
 const props = defineProps<{ playerId: string }>();
 const session = useSession();
@@ -73,7 +72,7 @@ const steamNotice = computed(() => {
           </div>
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:ml-auto w-full sm:w-auto">
-          <div class="relative"><StatTile label="Rating" :value="p.skill.rating" /><RankIcon :rank="p.skill.rank" :size="26" class="absolute top-2 right-2" /></div>
+          <StatTile :label="p.skill.rating == null ? `Unrated · ${Math.min(p.skill.matches, p.skill.calibration)}/${p.skill.calibration}` : 'Rating'" :value="p.skill.rating ?? '—'" />
           <StatTile label="Points" :value="current?.points?.toLocaleString()" />
           <StatTile label="Wins" :value="current?.wins" tone="win" />
           <StatTile label="Losses" :value="current?.losses" tone="loss" />

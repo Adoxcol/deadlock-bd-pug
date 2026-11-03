@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchPoints, rankOf, skillRating, standings, underdogBonus } from '../src/rating/points.js';
+import { matchPoints, skillRating, standings, underdogBonus } from '../src/rating/points.js';
 
 describe('PUG points', () => {
   it('matches the published scores', () => {
@@ -16,9 +16,10 @@ describe('PUG points', () => {
   it('rates players from play and starts new players at 1200', () => {
     expect(skillRating([])).toBe(1200);
     const big = { won: true, kills: 19, deaths: 4, assists: 9, netWorth: 46546 };
-    expect(skillRating([big])).toBe(1320);
-    expect(skillRating([{ ...big, bonus: 20 }])).toBe(1320);
-    expect(rankOf(1320)).toBe('Arcanist'); expect(rankOf(899)).toBe('Initiate'); expect(rankOf(1700)).toBe('Eternus');
+    expect(skillRating([big])).toBe(1344);
+    expect(skillRating([{ ...big, bonus: 20 }])).toBe(1344);
+    expect(skillRating(Array(5).fill(big))).toBe(1920);
+    expect(skillRating(Array(9).fill(big))).toBe(1920);
   });
   it('pays only the underdog, capped, half on a loss', () => {
     expect(underdogBonus('AMBER', true, 1100, 1250)).toBe(15);

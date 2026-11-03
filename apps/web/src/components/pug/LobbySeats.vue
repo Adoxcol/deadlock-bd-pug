@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { Crown, UserRound } from 'lucide-vue-next';
 import TeamNameInput from './TeamNameInput.vue';
-import RankIcon from '../RankIcon.vue';
 
 defineProps<{
   format: string;
   seats: { key: 'a' | 'b'; label: string; name: string | null; isMe: boolean; canTake: boolean; team: string | null; customTeam: string; defaultTeam: string }[];
-  pool: { id: string; name: string; isMe: boolean; rating: number; rank: string }[];
+  pool: { id: string; name: string; isMe: boolean; rating: string }[];
   slots: number;
   pending: boolean;
 }>();
@@ -55,7 +54,7 @@ const initial = (name: string) => name.replace('[SIM] ', '').charAt(0).toUpperCa
         <template v-if="pool[n - 1]">
           <span :key="pool[n - 1]!.id" class="min-w-0 animate-fade-up">
             <span class="block text-sm font-semibold truncate">{{ pool[n - 1]!.name }}</span>
-            <span class="block truncate font-mono text-[10px] uppercase tracking-wider text-muted"><span v-if="pool[n - 1]!.isMe" class="text-primary">You · </span><RankIcon :rank="pool[n - 1]!.rank" :size="14" /> {{ pool[n - 1]!.rating }}</span>
+            <span class="block truncate font-mono text-[10px] uppercase tracking-wider text-muted"><span v-if="pool[n - 1]!.isMe" class="text-primary">You · </span>{{ pool[n - 1]!.rating }}</span>
           </span>
         </template>
         <UserRound v-else class="w-4 h-4 text-line" aria-label="Open slot" />
