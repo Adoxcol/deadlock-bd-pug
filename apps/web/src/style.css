@@ -66,3 +66,12 @@ body::before {
 ::-webkit-scrollbar-thumb { background: rgba(212, 162, 76, .45); border-radius: 0; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(212, 162, 76, .8); }
 ::-webkit-scrollbar-button { display: none; height: 0; width: 0; }
+
+/* Banned hero: colour drains away to grey. */
+.ban-grey { animation: ban-grey .8s ease-out both; }
+.ban-grey-late { animation-delay: .55s; }
+@keyframes ban-grey { from { filter: grayscale(0); } to { filter: grayscale(1) brightness(.8); } }
+
+/* The slash scales with its slot, so it stays bold on tiny tiles. */
+.ban-slash { position: absolute; left: -25%; top: calc(50% - 6%); width: 150%; height: 12%; min-height: 3px; background: #e5483a; box-shadow: 0 0 6px rgb(0 0 0 / .9); z-index: 1; pointer-events: none; animation: ban-slash-in .25s ease-out both; transform: rotate(-45deg); }
+@keyframes ban-slash-in { from { transform: rotate(-45deg) scaleX(0); } to { transform: rotate(-45deg) scaleX(1); } }

@@ -66,7 +66,7 @@ Use `SIMULATION_MODE=true` locally: it enables a dev login (pick any role) and "
 - No secrets in the repo; use `.env` (documented in `.env.example`).
 
 **Assets and IP**
-- No Valve/Deadlock artwork, audio or fonts, and no other site's branding, in the repo. Load hero images and voicelines from deadlock-api at runtime. Our own crests, logo and sounds are made in code.
+- No Valve/Deadlock artwork, audio or fonts, and no other site's branding, in the repo. Load hero images and voicelines from deadlock-api at runtime; the one exception is the hero-select renders, loaded at runtime from JustGDX/DeadlockWiki through jsDelivr. Our own crests, logo and sounds are made in code.
 - Check a project's licence before copying any of its code (e.g. `AzzyDreamer/deadlock-drafting-overlay` has no licence, so don't copy from it).
 
 **Code style**

@@ -21,7 +21,7 @@ const ring = computed(() => ({
 })[props.state]);
 </script>
 <template>
-  <div :class="['relative overflow-hidden rounded-lg border bg-raised', sz, ring, animate && 'animate-slot-in']">
+  <div :class="['relative overflow-hidden rounded-lg border bg-raised', sz, ring, animate && 'animate-slot-in', state === 'banned' && 'ban-grey']">
     <template v-if="state !== 'empty' && state !== 'active-pick' && state !== 'active-ban'">
       <img v-if="src && !failed" :src="src" :alt="name ?? ''" class="absolute inset-0 w-full h-full object-cover object-top" loading="lazy" @error="failed = true" />
       <div v-else class="absolute inset-0" :style="{ background: `linear-gradient(160deg, hsl(${hue} 45% 26%), hsl(${(hue + 40) % 360} 35% 12%) 70%)` }">
@@ -31,9 +31,7 @@ const ring = computed(() => ({
       <div v-if="size === 'md' || size === 'lg'" class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent pt-6 pb-1.5 px-1.5">
         <span class="block font-display text-xs sm:text-sm font-bold uppercase tracking-wider text-text truncate text-center">{{ name }}</span>
       </div>
-      <div v-if="state === 'banned'" class="absolute inset-0 bg-black/55 grayscale">
-        <div class="absolute left-[-10%] right-[-10%] top-1/2 h-[3px] bg-danger origin-center animate-ban-slash" />
-      </div>
+      <span v-if="state === 'banned'" class="ban-slash" />
       <div v-if="state === 'taken'" class="absolute inset-0 bg-black/65" />
       <span v-if="label" class="absolute top-1 left-1 right-1 text-center text-[9px] font-semibold uppercase tracking-wide rounded bg-black/70 text-white/90 px-1 py-0.5 truncate">{{ label }}</span>
     </template>

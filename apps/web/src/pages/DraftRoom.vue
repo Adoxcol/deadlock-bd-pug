@@ -9,6 +9,7 @@ import {
 } from 'lucide-vue-next';
 import { sfx, volume, playVoice } from '../lib/sfx';
 import RevealSplash from '../components/draft/RevealSplash.vue';
+import { preloadImages } from '../lib/preload';
 import TeamCrest, { FACTION } from '../components/draft/TeamCrest.vue';
 import DraftIntro from '../components/draft/DraftIntro.vue';
 import { api, ApiError } from '../lib/api';
@@ -41,6 +42,8 @@ const hovered = ref<number | null>(null);
 /** Hero shown in the big preview: your selection, else whatever you're hovering. */
 const art = (id: number | null) => (id === null ? null : heroes.byId(id)?.verticalUrl ?? heroes.byId(id)?.imageUrl ?? null);
 const preview = computed(() => selected.value ?? hovered.value);
+// Heroes without a render fall back to the large backdrop, so fetch that only when a captain is about to lock it.
+watch(preview, (id) => { if (id != null) preloadImages([heroes.byId(id)?.renderUrl ?? heroes.byId(id)?.backgroundUrl]); });
 const query = ref('');
 const heroType = ref<string>('all');
 const now = ref(realtime.now());
@@ -270,6 +273,8 @@ function subscribe(id: string) {
 watch(() => props.draftId, async (id) => { rec.value = null; await load(); subscribe(id); });
 onMounted(async () => {
   await Promise.all([heroes.load().catch((e) => (error.value = e.message)), load()]);
+  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+  preloadImages(heroes.list.flatMap((h) => [h.imageUrl, h.nameUrl, saveData ? null : h.renderUrl]));
   subscribe(props.draftId);
   tick = window.setInterval(() => (now.value = realtime.now()), 250);
   window.addEventListener('keydown', onKey);
@@ -284,7 +289,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
     <DraftIntro v-if="intro" :key="intro" :team-names="rec.teamNames"
       :subtitle="`${s.config.format} · ${s.config.bansPerTeam} bans per team · ${s.config.timerSeconds ? s.config.timerSeconds + 's per turn' : 'no timer'}`" />
     <RevealSplash v-if="splash" :key="splash.key" :type="splash.type" :team="splash.team" :team-name="rec.teamNames[splash.team]"
-      :name="heroName(splash.heroId)" :src="heroes.byId(splash.heroId)?.imageUrl" :name-url="heroes.byId(splash.heroId)?.nameUrl" :bg-url="heroes.byId(splash.heroId)?.backgroundUrl" />
+      :name="heroName(splash.heroId)" :src="heroes.byId(splash.heroId)?.imageUrl" :name-url="heroes.byId(splash.heroId)?.nameUrl" :bg-url="heroes.byId(splash.heroId)?.backgroundUrl" :render-url="heroes.byId(splash.heroId)?.renderUrl" />
     <div v-if="confetti" :key="confetti" class="fixed inset-0 z-50 pointer-events-none overflow-hidden" aria-hidden="true">
       <span v-for="(c, i) in confettiBits" :key="i" class="absolute -top-4 animate-confetti"
         :style="{ left: c.left, animationDelay: c.delay, width: `${c.size}px`, height: `${c.round ? c.size : c.size * 1.8}px`, background: c.color, borderRadius: c.round ? '9999px' : '2px' }" />
@@ -426,7 +431,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                 <div v-for="(b, i) in slots(t, 'ban')" :key="`tb${i}-${b.heroId}`" :title="b.heroId !== null ? heroName(b.heroId) : undefined"
                   :class="['relative w-9 h-9 sm:w-11 sm:h-11 rounded-sm overflow-hidden border bg-bg/70', b.active ? 'border-danger animate-glow-danger' : 'border-danger/40']">
                   <img v-if="b.heroId !== null" :src="heroes.byId(b.heroId)?.imageUrl ?? undefined" alt="" :class="['absolute inset-0 w-full h-full object-cover object-top grayscale opacity-70', lastStepKey === `${t}-ban-${i}` && 'animate-slot-in']" />
-                  <X :class="['absolute inset-0 m-auto w-4 h-4', b.heroId !== null ? 'text-danger drop-shadow' : 'text-danger/50']" />
+                  <span v-if="b.heroId !== null" class="ban-slash" /><X v-else class="absolute inset-0 m-auto w-4 h-4 text-danger/50" />
                 </div>
               </div>
             </div>
@@ -497,6 +502,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                       :class="['relative w-7 h-7 overflow-hidden border-2 -skew-x-6 bg-bg/70', s.config.sequence[i].team === 'amber' ? 'border-amber-team/70' : 'border-sapphire-team/70',
                         i === s.step && s.status === 'drafting' && (ph.type === 'ban' ? '!border-danger bg-danger/30 animate-glow-danger' : '!border-primary bg-primary/30 animate-glow'), i < s.step && 'opacity-80']">
                       <img v-if="stepHero(i) !== null" :src="heroes.byId(stepHero(i)!)?.imageUrl ?? undefined" alt="" :class="['absolute inset-0 w-full h-full object-cover object-top skew-x-6 scale-125', ph.type === 'ban' && 'grayscale']" />
+                      <span v-if="stepHero(i) !== null && ph.type === 'ban'" class="ban-slash" />
                       <span v-else-if="stepSkipped(i)" class="absolute inset-0 grid place-items-center skew-x-6 text-muted text-xs">—</span>
                     </div>
                   </div>
@@ -524,12 +530,12 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                         :title="unavailableReason(h.id) ? `${h.name} (${unavailableReason(h.id)})` : h.name"
                         :class="['group relative aspect-[5/6] xl:aspect-auto overflow-hidden border bg-gradient-to-b from-[#2a2622] to-[#141210] transition-[transform,border-color,filter] duration-150 ease-out',
                           selected === h.id ? (step?.type === 'ban' ? 'border-danger ring-2 ring-danger z-10 -translate-y-0.5' : 'border-primary ring-2 ring-primary z-10 -translate-y-0.5') : 'border-black/60',
-                          unavailableReason(h.id) ? 'opacity-30 grayscale' : 'hover:border-text/80 hover:-translate-y-0.5 hover:z-10 brightness-[.85] hover:brightness-110 cursor-pointer']"
+                          unavailableReason(h.id) === 'banned' ? 'opacity-60 grayscale' : unavailableReason(h.id) ? 'opacity-30 grayscale' : 'hover:border-text/80 hover:-translate-y-0.5 hover:z-10 brightness-[.85] hover:brightness-110 cursor-pointer']"
                         @click="choose(h.id)" @pointerenter="hovered = h.id">
                         <img v-if="h.imageUrl" :src="h.imageUrl" alt="" class="absolute inset-0 w-full h-full object-cover object-top transition-transform duration-200 group-hover:scale-110" loading="lazy" />
                         <span v-else class="absolute inset-0 grid place-items-center font-display text-xs text-muted">{{ h.name.slice(0, 2) }}</span>
+                        <span v-if="unavailableReason(h.id) === 'banned'" class="ban-slash" />
                         <span class="absolute inset-x-0 bottom-0 pt-3 pb-0.5 bg-gradient-to-t from-black via-black/70 to-transparent font-display text-[8.5px] uppercase text-center truncate px-0.5 opacity-0 group-hover:opacity-100 transition-opacity">{{ h.name }}</span>
-                        <span v-if="unavailableReason(h.id) === 'banned'" class="absolute left-[-25%] w-[150%] top-1/2 h-0.5 bg-danger rotate-[-45deg]" />
                       </button>
                     </div>
                   </PageState>
@@ -539,9 +545,12 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                 <div class="relative card overflow-hidden min-h-[320px] xl:min-h-0 flex flex-col justify-end p-5">
                   <Transition enter-active-class="transition-opacity duration-200" leave-active-class="transition-opacity duration-200 absolute inset-0" enter-from-class="opacity-0" leave-to-class="opacity-0">
                     <div v-if="preview !== null" :key="preview" class="absolute inset-0">
+                      <img v-if="heroes.byId(preview)?.renderUrl" :src="heroes.byId(preview)!.renderUrl!" alt="" class="absolute inset-0 w-full h-full object-cover object-top" />
+                      <template v-else>
                       <img v-if="heroes.byId(preview)?.backgroundUrl" :src="heroes.byId(preview)!.backgroundUrl!" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover object-right opacity-90" />
                       <img v-else :src="heroes.byId(preview)?.imageUrl ?? undefined" alt="" aria-hidden="true" class="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-50" />
                       <img :src="heroes.byId(preview)?.imageUrl ?? undefined" alt="" class="absolute right-[4%] bottom-0 h-[92%] max-h-[560px] w-auto object-contain object-bottom drop-shadow-[0_10px_40px_rgba(0,0,0,.7)]" />
+                      </template>
                       <div class="absolute inset-0 bg-gradient-to-t from-bg via-bg/30 to-transparent" />
                     </div>
                   </Transition>
@@ -609,7 +618,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
                     <template v-for="(b, i) in slots(t, 'ban')" :key="i">
                       <div v-if="b.heroId !== null" class="relative w-8 h-10 overflow-hidden border border-danger/60 bg-raised" :title="heroName(b.heroId)">
                         <img :src="art(b.heroId) ?? undefined" alt="" class="absolute inset-0 w-full h-full object-cover object-top grayscale opacity-70" />
-                        <div class="absolute left-[-25%] w-[150%] top-1/2 h-0.5 bg-danger rotate-[-45deg]" />
+                        <span class="ban-slash" />
                       </div>
                       <span v-else class="w-8 h-10 grid place-items-center border border-line bg-raised/60 font-mono text-[7px] font-bold uppercase text-muted">None</span>
                     </template>

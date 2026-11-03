@@ -4,6 +4,8 @@ export interface Hero {
   verticalUrl?: string | null; nameUrl?: string | null;
   /** 4K hero-select backdrop (transparent on the left); the API has no larger portrait than the 280×380 card cutout. */
   backgroundUrl?: string | null;
+  /** Full hero-select render with its scene painted in, about 200 KB. Null for heroes the render set doesn't cover. */
+  renderUrl?: string | null;
   tags?: string[];
   /** Hero-select voicelines: `select` plays on pick, `unselect` on ban. */
   vo?: { pick: string[]; ban: string[] };
@@ -30,10 +32,19 @@ export async function fetchHeroes(apiUrl: string, fetchImpl: typeof fetch = fetc
       nameUrl: h.images?.name_image ?? null,
       tags: Array.isArray(h.tags) ? h.tags : [],
       backgroundUrl: h.images?.background_image_webp ?? h.images?.background_image ?? null,
+      renderUrl: renderUrlFor(h.name),
       vo: voFor(vo, h.class_name),
     }));
   if (!heroes.length) throw new Error('Hero assets returned no heroes');
   return heroes;
+}
+
+/** JustGDX/DeadlockWiki, pinned to a commit so jsDelivr can cache it for good. The list is what that commit contains. */
+const RENDER_BASE = 'https://cdn.jsdelivr.net/gh/JustGDX/DeadlockWiki@e0e9625c8b82aff873fb4be70f9d95850332af90/heroes';
+const RENDERS = new Set('abrams apollo baba bebop billy calico celeste drifter dynamo graves grey-talon haze holliday infernus ivy kelvin lady-geist lash mcginnis mina mirage mo-and-krill paige paradox pocket rat-king rem seven shiv silver sinclair solomon the-doorman venator victor vindicta viscous vyper warden wraith yamato'.split(' '));
+function renderUrlFor(name: string): string | null {
+  const slug = name.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-');
+  return RENDERS.has(slug) ? `${RENDER_BASE}/${slug}.webp` : null;
 }
 
 type VoTable = Record<string, Record<string, unknown>>;
