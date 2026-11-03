@@ -47,7 +47,7 @@ const steamHint = computed(() => !!session.user && !session.user.isSimulated && 
       <div class="min-h-16 px-4 lg:px-6 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <RouterLink to="/" aria-label="Home" class="shrink-0"><Logo /></RouterLink>
         <!-- Full second row until the tickets fit beside the logo; then they join the main bar. On phones the row swipes sideways so the sticky header stays short. -->
-        <nav ref="navEl" class="order-last -mx-4 flex w-[calc(100%+2rem)] items-center gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:mx-0 md:w-full md:flex-wrap md:overflow-visible md:px-0 min-[1680px]:order-none min-[1680px]:w-auto" aria-label="Main">
+        <nav ref="navEl" class="order-last -mx-4 flex w-[calc(100%+2rem)] items-center gap-2 overflow-x-auto px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:mx-0 md:w-full md:flex-wrap md:overflow-visible md:px-0 min-[1840px]:order-none min-[1840px]:w-auto min-[1840px]:flex-nowrap" aria-label="Main">
           <RouterLink v-for="n in nav" :key="n.to" :to="n.to" :aria-current="isActive(n.to) ? 'page' : undefined" :class="['nav-tab', isActive(n.to) && 'nav-tab-active']">
             <component :is="n.icon" class="w-3.5 h-3.5 shrink-0" :stroke-width="2.25" />{{ n.label }}
           </RouterLink>
@@ -56,7 +56,7 @@ const steamHint = computed(() => !!session.user && !session.user.isSimulated && 
         <div class="ml-auto flex items-center gap-2">
           <span v-if="session.me?.simulationMode" class="hidden xl:inline text-[10px] font-bold uppercase tracking-wide text-warn border border-warn/40 rounded px-1.5 py-0.5">Simulation mode</span>
           <span class="hidden sm:flex items-center gap-1.5 text-xs" :class="realtime.connected.value ? 'text-accent' : 'text-muted'" :title="realtime.connected.value ? 'Realtime connected' : 'Realtime disconnected'">
-            <component :is="realtime.connected.value ? Wifi : WifiOff" class="w-3.5 h-3.5" />{{ realtime.connected.value ? 'Connected' : 'Offline' }}
+            <component :is="realtime.connected.value ? Wifi : WifiOff" class="w-3.5 h-3.5" /><span class="min-[1840px]:sr-only">{{ realtime.connected.value ? 'Connected' : 'Offline' }}</span>
           </span>
           <template v-if="session.user">
             <RouterLink v-if="session.can('PLAYER')" to="/drafts/new" class="btn-primary !h-9 hidden sm:inline-flex"><Plus class="w-4 h-4" />Create lobby</RouterLink>
