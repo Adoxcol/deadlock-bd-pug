@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { LayoutDashboard, Swords, Crosshair, Trophy, Shield, LogOut, Wifi, WifiOff, Radio, Plus, MessageCircle, X } from 'lucide-vue-next';
+import { LayoutDashboard, Swords, Crosshair, Trophy, Shield, LogOut, Wifi, WifiOff, Radio, Plus, MessageCircle, X, Search } from 'lucide-vue-next';
 import { useSession } from './stores/session';
 import { realtime } from './lib/ws';
 import { takeReturn } from './lib/returnTo';
@@ -25,6 +25,7 @@ const landing = computed(() => route.path === '/' && !session.user);
 const wide = computed(() => route.path.startsWith('/draft/'));
 const nav = computed(() => [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/queue', label: 'Find Match', icon: Search },
   { to: '/drafts', label: 'Drafts', icon: Swords },
   { to: '/matches', label: 'Matches', icon: Radio },
   { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },

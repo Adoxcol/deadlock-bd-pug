@@ -156,6 +156,17 @@ model PugSignupPlayer {
   @@unique([signupId, userId])
 }
 
+/// One row per player using Find Match. pugId is set once their queue pops, so their page can follow them to the room.
+model QueueEntry {
+  userId      String   @id
+  isSimulated Boolean  @default(false)
+  pugId       String?
+  joinedAt    DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@index([pugId, joinedAt])
+}
+
 model PugSession {
   /// Optional room name shown instead of "PUG #n".
   name           String?

@@ -5,7 +5,7 @@ import { SignupService } from '../src/discord/signups.js';
 
 const url = process.env.TEST_DATABASE_URL;
 describe.skipIf(!url)('PUG sign-ups', () => {
-  const db = new PrismaClient({ datasources: { db: { url } } });
+  const db = new PrismaClient(url ? { datasources: { db: { url } } } : undefined);
   afterAll(() => db.$disconnect());
   const notifier = new Notifier(db, null, async () => null);
   let formed = 0;

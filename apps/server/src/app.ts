@@ -594,14 +594,58 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     return result;
   }
   const toss = () => (randomInt(2) === 0 ? 'a' : 'b') as 'a' | 'b';
-  const signups = new SignupService(db, notifier, cfg.PUBLIC_URL, async (hostId, format, userIds, mode: CaptainMode) => {
+  async function formPug(hostId: string, format: string, userIds: string[], mode: CaptainMode, simulated = false) {
     const ratings = await ratingsFor(userIds);
     const captains = chooseCaptains(userIds.map((id) => ({ id, rating: shownRating(ratings.get(id)!) })), mode);
-    const pug = await createPug(hostId, { format: format as '6v6', draftProvider: 'NATIVE', amberName: 'Team Amber', sapphireName: 'Team Sapphire' });
-    await changeFormation(pug.id, { id: hostId, isSimulated: false }, (current, size) => formFromSignup(current, userIds, captains, size, toss));
+    const pug = await createPug(hostId, { format: format as '6v6', draftProvider: 'NATIVE', amberName: 'Team Amber', sapphireName: 'Team Sapphire' }, simulated);
+    await changeFormation(pug.id, { id: hostId, isSimulated: simulated }, (current, size) => formFromSignup(current, userIds, captains, size, toss));
     await audit(db, hostId, 'pug.signup.filled', 'PugSession', pug.id, null, { captains, mode });
     return { id: pug.id, number: pug.number, captains };
-  }, (channelId, messageId, embed) => (opts.discordSender ? opts.discordSender.edit(channelId, messageId, embed) : Promise.resolve()), (e) => app.log.warn(`signup: ${(e as Error).message}`));
+  }
+  // ---------- Find Match ----------
+  const QUEUE_FORMAT = '6v6';
+  const QUEUE_STALE_MS = 90_000;
+  const queueLock = redis ? new RedisLock(redis, 30_000, 25_000) : new MemoryLock();
+  /** Players who closed the page drop out, so a popped queue doesn't wait on people who left. Simulated and real players queue apart. */
+  async function queueView(userId: string | null, simulated: boolean) {
+    const now = new Date();
+    const swept = await db.queueEntry.deleteMany({ where: { OR: [{ pugId: null, lastSeenAt: { lt: new Date(now.getTime() - QUEUE_STALE_MS) } }, { pugId: { not: null }, lastSeenAt: { lt: new Date(now.getTime() - 3600_000) } }] } });
+    if (swept.count) hub.publish('dashboard', 'queue.updated', {});
+    const mine = userId ? await db.queueEntry.findUnique({ where: { userId } }) : null;
+    if (mine?.pugId) await db.queueEntry.delete({ where: { userId: mine.userId } }); // followed once; coming back to the page starts fresh
+    else if (mine) await db.queueEntry.update({ where: { userId: mine.userId }, data: { lastSeenAt: now } });
+    const waiting = await db.queueEntry.findMany({ where: { pugId: null, isSimulated: simulated }, orderBy: { joinedAt: 'asc' } });
+    const ids = waiting.map((e) => e.userId);
+    const [users, ratings] = await Promise.all([db.user.findMany({ where: { id: { in: ids } } }), ratingsFor(ids)]);
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return { total: TEAM_SIZE[QUEUE_FORMAT] * 2, inQueue: !!mine && !mine.pugId, pugId: mine?.pugId ?? null, players: ids.flatMap((id) => { const u = byId.get(id); return u ? [{ id, displayName: u.displayName, avatarUrl: u.avatarUrl, rating: shownRating(ratings.get(id)!) }] : []; }) };
+  }
+  app.get('/api/queue', async (req) => queueView(req.user?.id ?? null, req.user?.isSimulated ?? false));
+  app.post('/api/queue/join', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
+    const { id: userId, isSimulated } = req.user!;
+    await queueLock.withLock('queue', async () => {
+      const now = new Date();
+      await db.queueEntry.upsert({ where: { userId }, create: { userId, isSimulated }, update: { pugId: null, joinedAt: now, lastSeenAt: now, isSimulated } });
+      const fresh = new Date(now.getTime() - QUEUE_STALE_MS);
+      const size = TEAM_SIZE[QUEUE_FORMAT] * 2;
+      const next = await db.queueEntry.findMany({ where: { pugId: null, isSimulated, lastSeenAt: { gte: fresh } }, orderBy: { joinedAt: 'asc' }, take: size });
+      if (next.length < size) return;
+      const players = next.map((e) => e.userId);
+      const pug = await formPug(players[0]!, QUEUE_FORMAT, players, 'rated', isSimulated);
+      await db.queueEntry.updateMany({ where: { userId: { in: players } }, data: { pugId: pug.id, lastSeenAt: now } });
+      const url = `${cfg.PUBLIC_URL}/pugs/${pug.id}`;
+      for (const a of await db.discordAccount.findMany({ where: { userId: { in: players } } })) await notifier.enqueue('signup', `queue.found:${pug.id}:${a.discordId}`, { title: 'Match found', description: pug.captains.includes(a.userId) ? `You are a captain. Open the room to pick your team: ${url}` : `Teams are being picked: ${url}`, url, color: COLORS.teal }, false, { discordId: a.discordId });
+    });
+    hub.publish('dashboard', 'queue.updated', {});
+    return queueView(userId, isSimulated);
+  });
+  app.post('/api/queue/leave', { preHandler: requireRole('PLAYER') }, async (req) => {
+    await queueLock.withLock('queue', () => db.queueEntry.deleteMany({ where: { userId: req.user!.id, pugId: null } }));
+    hub.publish('dashboard', 'queue.updated', {});
+    return queueView(req.user!.id, req.user!.isSimulated);
+  });
+
+  const signups = new SignupService(db, notifier, cfg.PUBLIC_URL, (hostId, format, userIds, mode) => formPug(hostId, format, userIds, mode), (channelId, messageId, embed) => (opts.discordSender ? opts.discordSender.edit(channelId, messageId, embed) : Promise.resolve()), (e) => app.log.warn(`signup: ${(e as Error).message}`));
   setInterval(() => void signups.tick().catch((e) => app.log.warn(`signup tick failed: ${(e as Error).message}`)), 60_000).unref();
   app.post('/api/pugs/:id/formation', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 30, timeWindow: '10 seconds' } } }, async (req) => {
     const { command, expectedSeq } = formationBody.parse(req.body);
