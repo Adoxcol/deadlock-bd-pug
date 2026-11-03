@@ -761,19 +761,22 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   });
 
   // Rooms nobody finished would block their players from queueing forever.
-  const closeDeadPugs = setInterval(() => void (async () => {
+  const sweepDeadPugs = () => void (async () => {
     const hours = (n: number) => new Date(Date.now() - n * 3600_000);
-    const open = await db.pugSession.findMany({ where: { status: { in: ['WAITING', 'DRAFTING', 'LIVE'] }, createdAt: { lt: hours(1) } }, select: { id: true, createdAt: true, matches: { select: { result: { select: { id: true } } } } } });
+    const open = await db.pugSession.findMany({ where: { status: { in: ['WAITING', 'DRAFTING', 'LIVE'] }, createdAt: { lt: hours(0.75) } }, select: { id: true, createdAt: true, formation: true, _count: { select: { participants: true, draftRooms: true } }, matches: { select: { result: { select: { id: true } } } } } });
     for (const p of open) {
       const finished = p.matches.some((m) => m.result);
-      const dead = finished || p.createdAt < (p.matches.length ? hours(12) : hours(3));
+      const seated = (p.formation as unknown as Formation | null)?.players.length ?? 0;
+      const empty = !p._count.participants && !p._count.draftRooms && !p.matches.length && !seated;
+      const dead = finished || empty || p.createdAt < (p.matches.length ? hours(12) : hours(3));
       if (!dead) continue;
       await db.pugSession.update({ where: { id: p.id }, data: finished ? { status: 'COMPLETED', completedAt: new Date() } : { status: 'CANCELLED' } });
       await audit(db, null, finished ? 'pug.autocomplete' : 'pug.autocancel', 'PugSession', p.id);
       hub.publish('dashboard', 'pug.updated', { id: p.id });
     }
-  })().catch((e) => app.log.warn(`PUG cleanup failed: ${(e as Error).message}`)), 5 * 60_000);
-  closeDeadPugs.unref();
+  })().catch((e) => app.log.warn(`PUG cleanup failed: ${(e as Error).message}`));
+  sweepDeadPugs();
+  setInterval(sweepDeadPugs, 5 * 60_000).unref();
 
   const signups = new SignupService(db, notifier, cfg.PUBLIC_URL, (hostId, format, userIds, mode) => formPug(hostId, format, userIds, mode), (channelId, messageId, embed) => (opts.discordSender ? opts.discordSender.edit(channelId, messageId, embed) : Promise.resolve()), (e) => app.log.warn(`signup: ${(e as Error).message}`));
   setInterval(() => void signups.tick().catch((e) => app.log.warn(`signup tick failed: ${(e as Error).message}`)), 60_000).unref();
