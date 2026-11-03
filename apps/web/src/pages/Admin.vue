@@ -12,9 +12,11 @@ import MatchImport from '../components/MatchImport.vue';
 const session = useSession();
 const router = useRouter();
 async function createPug() { const p = await api<{ id: string }>('/pugs', { method: 'POST', body: pug }); await router.push(`/pugs/${p.id}`); }
-const tab = ref<'pug' | 'import' | 'users' | 'seasons' | 'discord' | 'health' | 'audit'>('pug');
+const tab = ref<'pug' | 'import' | 'moderation' | 'users' | 'seasons' | 'discord' | 'health' | 'audit'>('pug');
 const msg = ref<string | null>(null);
 const users = ref<any[]>([]); const seasons = ref<any[]>([]); const audit = ref<any[]>([]); const health = ref<any>(null); const notes = ref<any[]>([]);
+const modUsers = ref<any[]>([]); const ban = reactive({ days: 7, reason: '' }); const fix = reactive({ matchId: '', winner: 'amber' });
+const banned = (u: any) => !!u.bannedUntil && new Date(u.bannedUntil) > new Date();
 const pug = reactive({ format: '6v6', amberName: 'Team Amber', sapphireName: 'Team Sapphire' });
 const season = reactive({ name: '', initialRating: 1500, kFactor: 24 });
 const discord = reactive({ discordGuildId: '', announceChannelId: '' });
@@ -22,10 +24,11 @@ async function run(fn: () => Promise<unknown>, ok: string) { try { await fn(); m
 async function load() {
   users.value = await api('/users').catch(() => []) as any[];
   seasons.value = await api('/seasons').catch(() => []) as any[];
+  modUsers.value = await api('/admin/users').catch(() => []) as any[];
   if (session.can('ADMIN')) { audit.value = await api('/admin/audit').catch(() => []) as any[]; health.value = await api('/admin/health').catch(() => null); notes.value = await api('/admin/notifications').catch(() => []) as any[]; }
 }
 onMounted(load);
-const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'import', l: 'Import match', min: 'MODERATOR' },{ k: 'users', l: 'Users & roles', min: 'ADMIN' }, { k: 'seasons', l: 'Seasons', min: 'ADMIN' }, { k: 'discord', l: 'Discord', min: 'ADMIN' }, { k: 'health', l: 'System health', min: 'ADMIN' }, { k: 'audit', l: 'Audit log', min: 'ADMIN' }] as const;
+const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'import', l: 'Import match', min: 'MODERATOR' }, { k: 'moderation', l: 'Moderation', min: 'MODERATOR' },{ k: 'users', l: 'Users & roles', min: 'ADMIN' }, { k: 'seasons', l: 'Seasons', min: 'ADMIN' }, { k: 'discord', l: 'Discord', min: 'ADMIN' }, { k: 'health', l: 'System health', min: 'ADMIN' }, { k: 'audit', l: 'Audit log', min: 'ADMIN' }] as const;
 </script>
 <template>
   <div v-if="!session.can('MODERATOR')" class="card-ornate p-6 text-sm text-muted max-w-xl mx-auto">Moderator access required.</div>
@@ -46,6 +49,26 @@ const tabs = [{ k: 'pug', l: 'PUG sessions', min: 'MODERATOR' }, { k: 'import', 
     </form>
 
     <MatchImport v-else-if="tab === 'import'" />
+
+    <div v-else-if="tab === 'moderation'" class="space-y-4">
+      <form class="card-ornate p-5 grid sm:grid-cols-3 gap-4 items-end" @submit.prevent="run(() => api(`/admin/matches/${fix.matchId.trim().split('/').pop()}/correct-result`, { method: 'POST', body: { winner: fix.winner } }), 'Result corrected.')">
+        <div><label class="label" for="fm">Match link or site ID</label><input id="fm" v-model="fix.matchId" class="input font-mono" required /></div>
+        <div><span class="label">Correct winner</span><UiSelect v-model="fix.winner" :options="[{ value: 'amber', label: 'Amber' }, { value: 'sapphire', label: 'Sapphire' }]" /></div>
+        <button class="btn-primary">Correct result</button>
+      </form>
+      <div class="card-ornate p-5 grid sm:grid-cols-2 gap-4">
+        <div><label class="label" for="bd">Ban length in days</label><input id="bd" v-model.number="ban.days" type="number" min="1" max="3650" class="input" /></div>
+        <div><label class="label" for="br">Reason, shown to the player</label><input id="br" v-model="ban.reason" maxlength="200" class="input" /></div>
+      </div>
+      <div class="card-ornate divide-y divide-line/60">
+        <div v-for="u in modUsers" :key="u.id" class="flex flex-wrap items-center gap-3 px-4 py-2.5">
+          <RouterLink :to="`/players/${u.id}`" class="font-semibold hover:text-primary min-w-0 break-words">{{ u.displayName }}</RouterLink>
+          <span v-if="banned(u)" class="text-xs text-danger">Banned until {{ dateShort(u.bannedUntil) }}{{ u.banReason ? ` · ${u.banReason}` : '' }}</span>
+          <button v-if="banned(u)" class="btn-ghost !h-8 ml-auto" @click="run(() => api(`/admin/users/${u.id}/ban`, { method: 'POST', body: { days: 0 } }), 'Ban lifted.')">Lift ban</button>
+          <button v-else class="btn-danger !h-8 ml-auto" @click="run(() => api(`/admin/users/${u.id}/ban`, { method: 'POST', body: { days: ban.days, reason: ban.reason } }), `${u.displayName} banned for ${ban.days} days.`)">Ban</button>
+        </div>
+      </div>
+    </div>
 
     <div v-else-if="tab === 'users'" class="card-ornate overflow-x-auto"><table class="w-full table-compact"><thead><tr><th>User</th><th>Role</th></tr></thead>
       <tbody><tr v-for="u in users" :key="u.id" class="hover:bg-raised/50"><td><RouterLink :to="`/players/${u.id}`" class="font-semibold hover:text-primary">{{ u.displayName }}</RouterLink></td><td class="w-56">

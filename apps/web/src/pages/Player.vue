@@ -2,7 +2,7 @@
 import PlayerAvatar from '../components/PlayerAvatar.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { Link2, Eye, ChevronRight } from 'lucide-vue-next';
+import { Award, Link2, Eye, ChevronRight } from 'lucide-vue-next';
 import UiSelect from '../components/UiSelect.vue';
 import { api } from '../lib/api';
 import { pct, timeAgo } from '../lib/format';
@@ -35,6 +35,13 @@ const spark = computed(() => {
   const min = Math.min(...xs), max = Math.max(...xs), span = max - min || 1;
   return { min, max, points: xs.map((v: number, i: number) => `${(i / (xs.length - 1)) * 300},${70 - ((v - min) / span) * 62 - 4}`).join(' ') };
 });
+const chart = computed(() => {
+  const xs = (p.value?.ratingHistory ?? []) as { date: string; rating: number }[]; if (xs.length < 2) return null;
+  const vals = xs.map((x) => x.rating), min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+  const X = (i: number) => (i / (xs.length - 1)) * 300, Y = (v: number) => 66 - ((v - min) / span) * 62;
+  return { min, max, latest: vals[vals.length - 1], points: xs.map((x, i) => `${X(i)},${Y(x.rating)}`).join(' '), hits: xs.map((x, i) => ({ x: X(i) - 150 / xs.length, w: 300 / xs.length, label: `${x.rating} on ${new Date(x.date).toLocaleDateString()}` })), rows: xs };
+});
+const medal = (rank: number) => ['Champion', 'Runner-up', 'Third place'][rank - 1] ?? `#${rank}`;
 async function setVis(v: string) { await api('/me/visibility', { method: 'PATCH', body: { visibility: v } }); await load(); }
 const heroOf = (id: number | null) => (id == null ? undefined : heroes.byId(id));
 const route = useRoute();
@@ -77,6 +84,11 @@ const steamNotice = computed(() => {
         </div>
       </header>
 
+      <section v-if="p.awards?.length" class="card p-3 flex flex-wrap gap-2" aria-label="Season awards">
+        <span v-for="a in p.awards" :key="a.id" :class="['inline-flex items-center gap-2 px-2.5 py-1.5 border text-sm', a.rank === 1 ? 'border-primary text-primary' : 'border-line']">
+          <Award class="w-4 h-4 shrink-0" /><span class="font-semibold">{{ medal(a.rank) }}</span><span class="text-muted">{{ a.seasonName }}</span><SimBadge v-if="a.simulated" />
+        </span>
+      </section>
       <p v-if="self && steamNotice" role="status" :class="['card p-3 text-sm border-l-2', steamNotice.ok ? 'border-l-accent' : 'border-l-danger']">{{ steamNotice.text }}</p>
       <div v-if="self" class="card p-3 flex flex-wrap items-center gap-3 text-sm">
         <a v-if="!p.steam" href="/api/auth/steam" class="btn-ghost !h-9"><Link2 class="w-4 h-4" />Link Steam account</a>
@@ -137,8 +149,31 @@ const steamNotice = computed(() => {
         </PageState>
       </section>
 
+      <section v-if="tab === 'overview' && (p.teammates?.length || p.rivals?.length)" class="grid sm:grid-cols-2 gap-4">
+        <div v-for="block in [{ title: 'Best teammates', rows: p.teammates, verb: 'together' }, { title: 'Top rivals', rows: p.rivals, verb: 'against' }]" :key="block.title" class="card-ornate p-4">
+          <h2 class="h-section mb-3">{{ block.title }}</h2>
+          <p v-if="!block.rows.length" class="text-sm text-muted">Not enough shared matches yet.</p>
+          <ul v-else class="space-y-1">
+            <li v-for="r in block.rows" :key="r.userId"><RouterLink :to="`/players/${r.userId}`" class="flex items-center gap-3 p-1.5 rounded-lg hover:bg-raised min-w-0">
+              <PlayerAvatar :name="r.displayName" :src="r.avatarUrl" class="w-8 h-8 text-xs" /><span class="truncate min-w-0 font-medium">{{ r.displayName }}</span>
+              <span class="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted">{{ r.wins }}W {{ r.games - r.wins }}L {{ block.verb }}</span>
+            </RouterLink></li>
+          </ul>
+        </div>
+      </section>
+
       <!-- Rating -->
       <section v-if="tab === 'overview' || tab === 'rating'" class="card-ornate p-4">
+        <h2 class="h-section mb-3">Rating history<span v-if="chart" class="ml-2 font-mono text-sm tabular-nums text-muted normal-case">now {{ chart.latest }}</span></h2>
+        <PageState :empty="!chart" :empty-text="`Rating starts after ${p.skill.calibration} rated matches.`">
+          <div v-if="chart" class="flex gap-3 mb-5">
+            <div class="flex flex-col justify-between font-mono text-[10px] text-muted tabular-nums py-1"><span>{{ chart.max }}</span><span>{{ chart.min }}</span></div>
+            <svg viewBox="0 0 300 70" class="w-full h-32" preserveAspectRatio="none" role="img" :aria-label="`Rating over ${chart.rows.length} matches, from ${chart.rows[0]!.rating} to ${chart.latest}`">
+              <polyline :points="chart.points" fill="none" stroke="#d4a24c" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" />
+              <rect v-for="(h, i) in chart.hits" :key="i" :x="h.x" y="0" :width="h.w" height="70" fill="transparent" class="hover:fill-primary/15"><title>{{ h.label }}</title></rect>
+            </svg>
+          </div>
+        </PageState>
         <h2 class="h-section mb-3">Points history</h2>
         <PageState :empty="!spark" empty-text="Not enough rated matches yet.">
           <div v-if="spark" class="flex gap-3">

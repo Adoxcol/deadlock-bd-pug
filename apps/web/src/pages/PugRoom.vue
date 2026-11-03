@@ -47,6 +47,14 @@ const teamBonus = (t: CaptainSeat) => {
   return underdogBonus(t === 'a' ? 'AMBER' : 'SAPPHIRE', true, Math.round(teamTotal('a') / n), Math.round(teamTotal('b') / n));
 };
 const avatar = (id: string | null) => (room.value?.participants.find((p) => p.userId === id)?.user as { avatarUrl?: string | null } | undefined)?.avatarUrl;
+const canManage = computed(() => !!room.value?.invites || session.can('MODERATOR'));
+const canBalance = computed(() => !!seat.value && !!state.value && (['choice', 'side'].includes(state.value.phase) || (state.value.phase === 'picking' && !state.value.picks.length)));
+const tossedPlayers = computed(() => (state.value && ['choice', 'side', 'picking'].includes(state.value.phase) ? state.value.players : []));
+async function roomAction(path: string, body: object) {
+  actionError.value = null;
+  try { await api(`/pugs/${room.value!.id}/${path}`, { method: 'POST', body }); await load(); }
+  catch (e) { actionError.value = (e as Error).message; }
+}
 const captainName = (t: CaptainSeat | null) => t ? name(state.value?.captains[t] ?? null) : '';
 const inviteToken = computed(() => (typeof route.query.k === 'string' ? route.query.k : null));
 const invited = computed(() => !!room.value?.code);
@@ -169,6 +177,19 @@ onUnmounted(() => clearInterval(timer));
           :pick-number="state.picks.length + 1" :total-picks="size * 2 - 2" :turn-name="teamName(pickingCaptain(state)!)"
           @pick="(userId) => command({ kind: 'pick', userId })" @team-name="(n) => command({ kind: 'teamName', name: n })" />
 
+        <section v-if="canBalance" class="card p-4 flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm min-w-0">Skip picks and let the server split teams evenly by rating? Both captains must agree. <span class="font-mono tabular-nums">{{ state!.votes.length }}/2</span></p>
+          <button class="btn-ghost shrink-0" :disabled="pending" @click="roomAction('balance', { agree: !state!.votes.includes(seat!) })">{{ state!.votes.includes(seat!) ? 'Cancel my vote' : 'Balance teams' }}</button>
+        </section>
+        <details v-if="tossedPlayers.length && (canManage || tossedPlayers.includes(me!))" class="card p-4 text-sm">
+          <summary class="cursor-pointer font-semibold">Someone can't play?</summary>
+          <p class="text-muted mt-2">The next player waiting in Find Match takes their spot.</p>
+          <ul class="mt-2 divide-y divide-line/60">
+            <template v-for="id in tossedPlayers" :key="id">
+              <li v-if="canManage || id === me" class="py-2 flex items-center justify-between gap-3"><span class="break-words min-w-0">{{ name(id) }}</span><button class="btn-ghost !h-8 shrink-0" :disabled="pending" @click="roomAction('replace', { userId: id })">{{ id === me ? 'Leave and replace me' : 'Replace' }}</button></li>
+            </template>
+          </ul>
+        </details>
         <InviteLinks v-if="waiting && room.invites && room.code" :code="room.code" :invites="room.invites" />
         <LobbySettings v-if="waiting && room.invites && room.settings" :id="room.id" :number="room.number" :name="room.name" :format="room.format" :settings="room.settings" @saved="load" />
 

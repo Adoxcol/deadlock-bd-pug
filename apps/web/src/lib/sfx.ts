@@ -76,3 +76,10 @@ export function playVoice(lines: string[] | undefined, delayMs = 250) {
     void voice.play().catch(() => { /* autoplay blocked until the user interacts */ });
   }, delayMs);
 }
+
+/** Loud on purpose: the player may be waiting in another window. */
+export function matchFound() {
+  const c = ready(); if (!c) return;
+  const t = c.currentTime;
+  [0, 0.18, 0.36, 0.7, 0.88, 1.06].forEach((at, i) => tone(c, i % 3 === 2 ? 1046 : 784, t + at, 0.16, 'triangle', 0.6));
+}

@@ -2,7 +2,7 @@ import type { PrismaClient, Prisma } from '@prisma/client';
 
 export interface Embed { title: string; description?: string; url?: string; color?: number; fields?: Array<{ name: string; value: string; inline?: boolean }>; footer?: { text: string }; image?: { url: string }; /** Text outside the embed: only this can ping. */ content?: string }
 export type Target = { channelId: string } | { discordId: string };
-export type NotificationKind = 'pug.created' | 'draft.started' | 'draft.completed' | 'match.started' | 'match.completed' | 'match.result' | 'rating.changed' | 'signup' | 'lobby.code' | 'weekly.highlights';
+export type NotificationKind = 'pug.created' | 'draft.started' | 'draft.completed' | 'match.started' | 'match.completed' | 'match.result' | 'rating.changed' | 'signup' | 'lobby.code' | 'weekly.highlights' | 'season.ended';
 export interface Sender { send(channelId: string, embed: Embed): Promise<string>; dm(discordId: string, embed: Embed): Promise<string>; /** Rewrites a message and removes its buttons. */ edit(channelId: string, messageId: string, embed: Embed): Promise<void> }
 
 export const COLORS = { teal: 0x2dd4bf, purple: 0xa78bfa, amber: 0xf59e0b, red: 0xef4444 };

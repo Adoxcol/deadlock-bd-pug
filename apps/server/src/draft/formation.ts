@@ -53,6 +53,48 @@ export function formFromSignup(prev: Formation, players: string[], captains: [st
   return run(s, { kind: 'toss' }, captains[0]);
 }
 
+/** Someone in a tossed room swaps out: the newcomer takes over their seat, team and pick. */
+export function replacePlayer(prev: Formation, outId: string, inId: string): Formation {
+  check(['choice', 'side', 'picking'].includes(prev.phase), 'Players can only be replaced between the toss and the hero draft.');
+  check(prev.players.includes(outId), 'That player is not in this room.');
+  check(!prev.players.includes(inId), 'The replacement is already in this room.');
+  const swap = (id: string) => (id === outId ? inId : id);
+  const s = structuredClone(prev);
+  s.players = s.players.map(swap);
+  s.teams = { a: s.teams.a.map(swap), b: s.teams.b.map(swap) };
+  for (const t of ['a', 'b'] as const) if (s.captains[t] === outId) s.captains[t] = inId;
+  s.picks = s.picks.map((p) => ({ ...p, userId: swap(p.userId) }));
+  s.seq++;
+  return s;
+}
+
+/** Tries every split, at most 252 for 6v6, keeping the captains apart. Unrated players should come in at the starting rating. */
+export function splitTeams(players: { id: string; rating: number }[], captains: [string, string], size: number): Record<CaptainSeat, string[]> {
+  const rating = new Map(players.map((p) => [p.id, p.rating]));
+  const others = players.map((p) => p.id).filter((id) => !captains.includes(id));
+  const total = players.reduce((n, p) => n + p.rating, 0);
+  let best: string[] = [], gap = Infinity;
+  const walk = (from: number, team: string[], sum: number) => {
+    if (team.length === size) { const g = Math.abs(total - 2 * sum); if (g < gap) { gap = g; best = team; } return; }
+    for (let i = from; i < others.length; i++) walk(i + 1, [...team, others[i]!], sum + rating.get(others[i]!)!);
+  };
+  walk(0, [captains[0]], rating.get(captains[0])!);
+  return { a: best, b: [captains[1], ...others.filter((id) => !best.includes(id))] };
+}
+
+/** Both captains must agree to skip picks. Once they do, the toss winner keeps first pick and teams lock for the hero draft. */
+export function applyBalanceVote(prev: Formation, userId: string, agree: boolean, split: Record<CaptainSeat, string[]>): Formation {
+  const seat = (['a', 'b'] as const).find((t) => prev.captains[t] === userId);
+  check(seat, 'Only a captain can do this.');
+  check(['choice', 'side'].includes(prev.phase) || (prev.phase === 'picking' && !prev.picks.length), 'Balancing is only available before the first pick.');
+  const s = structuredClone(prev);
+  s.votes = s.votes.filter((t) => t !== seat);
+  if (agree) s.votes.push(seat);
+  if (s.votes.length === 2) { s.teams = split; s.first = s.first ?? s.winner ?? 'a'; s.phase = 'complete'; }
+  s.seq++;
+  return s;
+}
+
 export type InviteRole = 'captainA' | 'captainB' | 'player';
 
 /** Applies an invite link. Reopening a link you already used changes nothing and returns the same object. */

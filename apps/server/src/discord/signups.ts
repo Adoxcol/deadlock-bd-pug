@@ -48,6 +48,8 @@ export class SignupService {
   async attachMessage(id: string, messageId: string) { await this.db.pugSignup.update({ where: { id }, data: { messageId } }); }
 
   async join(id: string, userId: string, discordId: string) {
+    const u = await this.db.user.findUnique({ where: { id: userId }, select: { bannedUntil: true } });
+    if (u?.bannedUntil && u.bannedUntil > new Date()) throw fail('You are banned from joining PUGs right now.', 403);
     const count = await this.db.$transaction(async (tx) => {
       // The row lock stops two simultaneous clicks from overfilling the last slot.
       await tx.$queryRaw`SELECT id FROM "PugSignup" WHERE id = ${id} FOR UPDATE`;

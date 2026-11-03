@@ -13,7 +13,7 @@ import type { Config } from './config.js';
 import { Hub } from './realtime/hub.js';
 import { DraftService, generateRoomCode } from './draft/service.js';
 import { DraftError, TEAM_SIZE, applyFormationCommand, createDraftState, buildDefaultSequence } from './draft/engine.js';
-import { applyInvite, chooseCaptains, defaultTeamName, formFromSignup, newFormation, type CaptainMode, type Formation, type InviteRole } from './draft/formation.js';
+import { applyBalanceVote, applyInvite, replacePlayer, splitTeams, chooseCaptains, defaultTeamName, formFromSignup, newFormation, type CaptainMode, type Formation, type InviteRole } from './draft/formation.js';
 import { RedisLock, MemoryLock, LockBusyError } from './draft/lock.js';
 import { PrismaDraftStore, syncHeroes } from './db/draftStore.js';
 import { PrismaResultsRepo } from './db/resultsRepo.js';
@@ -36,6 +36,7 @@ import { simulateMatch } from './sim/simulator.js';
 import { Notifier, COLORS, type Sender } from './discord/notifier.js';
 import { SignupService, signupTotal } from './discord/signups.js';
 import { matchCardSvg, pickMvp, playerCardSvg, renderPng, siteCardSvg, withMeta, type MatchCard, type PageMeta } from './share/card.js';
+import { relations } from './rating/relations.js';
 import { weekBoundary, weeklyHighlights } from './share/weekly.js';
 import { providers, validateImport } from './draft/providers.js';
 import { LobbyService, LobbyError } from './lobby/service.js';
@@ -604,13 +605,73 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   }
   // ---------- Find Match ----------
   const QUEUE_FORMAT = '6v6';
+  const QUEUE_SIZE = TEAM_SIZE[QUEUE_FORMAT] * 2;
   const QUEUE_STALE_MS = 90_000;
+  const READY_MS = 30_000;
   const queueLock = redis ? new RedisLock(redis, 30_000, 25_000) : new MemoryLock();
-  /** Players who closed the page drop out, so a popped queue doesn't wait on people who left. Simulated and real players queue apart. */
+  const notBanned = (u: User) => { if (u.bannedUntil && u.bannedUntil > new Date()) throw Object.assign(new Error(`You are banned until ${u.bannedUntil.toISOString().slice(0, 10)}${u.banReason ? `: ${u.banReason}` : ''}.`), { statusCode: 403 }); };
+  /** Finished PUGs can sit unmarked until cleanup, so a recorded result frees their players. */
+  const activePugOf = (userId: string) => db.pugSession.findFirst({ where: { status: { in: ['WAITING', 'DRAFTING', 'LIVE'] }, participants: { some: { userId } }, matches: { none: { result: { isNot: null } } } }, select: { id: true, number: true } });
+
+  // Rewrites one message rather than posting on every join. Debounced because a busy queue changes faster than Discord allows edits.
+  let queuePost: NodeJS.Timeout | null = null;
+  async function postQueueMessage() {
+    const sender = opts.discordSender, guild = await db.guild.findFirst();
+    if (!sender || !guild?.announceChannelId) return;
+    const entries = await db.queueEntry.findMany({ where: { pugId: null, isSimulated: false }, select: { readyCheckId: true } });
+    if (!entries.length && !guild.queueMessageId) return;
+    const left = QUEUE_SIZE - entries.length;
+    const embed = { title: `Find Match: ${entries.length}/${QUEUE_SIZE} in queue`, url: `${cfg.PUBLIC_URL}/queue`, color: left <= 2 ? COLORS.amber : COLORS.teal, description: entries.some((e) => e.readyCheckId) ? 'Queue full. Ready check running.' : entries.length ? `${left} more needed. Join at ${cfg.PUBLIC_URL}/queue` : `Nobody is waiting. Start the queue at ${cfg.PUBLIC_URL}/queue` };
+    if (guild.queueMessageId) { try { await sender.edit(guild.announceChannelId, guild.queueMessageId, embed); return; } catch { /* deleted: post a new one */ } }
+    await db.guild.update({ where: { id: guild.id }, data: { queueMessageId: await sender.send(guild.announceChannelId, embed) } });
+  }
+  const queueChanged = () => {
+    hub.publish('dashboard', 'queue.updated', {});
+    if (queuePost) return;
+    queuePost = setTimeout(() => { queuePost = null; void postQueueMessage().catch((e) => app.log.warn(`queue message failed: ${(e as Error).message}`)); }, 5000);
+    queuePost.unref();
+  };
+  async function startReadyCheck(isSimulated: boolean) {
+    const now = new Date();
+    if (await db.queueEntry.count({ where: { pugId: null, isSimulated, readyCheckId: { not: null } } })) return;
+    const next = await db.queueEntry.findMany({ where: { pugId: null, readyCheckId: null, isSimulated, lastSeenAt: { gte: new Date(now.getTime() - QUEUE_STALE_MS) } }, orderBy: { joinedAt: 'asc' }, take: QUEUE_SIZE });
+    if (next.length < QUEUE_SIZE) return;
+    const readyCheckId = randomUUID(), players = next.map((e) => e.userId);
+    await db.queueEntry.updateMany({ where: { userId: { in: players } }, data: { readyCheckId, readyDeadline: new Date(now.getTime() + READY_MS), readyAt: null } });
+    if (!isSimulated) for (const a of await db.discordAccount.findMany({ where: { userId: { in: players } } })) await notifier.enqueue('signup', `queue.ready:${readyCheckId}:${a.discordId}`, { title: 'Match found: ready up', description: `You have 30 seconds: ${cfg.PUBLIC_URL}/queue`, url: `${cfg.PUBLIC_URL}/queue`, color: COLORS.amber }, false, { discordId: a.discordId });
+  }
+  /** Ends a check that won't complete. Players who readied keep their place in line; dropMissing removes the rest. */
+  async function endReadyCheck(readyCheckId: string, isSimulated: boolean, dropMissing: boolean) {
+    if (dropMissing) await db.queueEntry.deleteMany({ where: { readyCheckId, readyAt: null } });
+    await db.queueEntry.updateMany({ where: { readyCheckId }, data: { readyCheckId: null, readyDeadline: null, readyAt: null, lastSeenAt: new Date() } });
+    await startReadyCheck(isSimulated);
+  }
+  async function popIfAllReady(readyCheckId: string, isSimulated: boolean) {
+    const entries = await db.queueEntry.findMany({ where: { readyCheckId }, orderBy: { joinedAt: 'asc' } });
+    if (entries.length < QUEUE_SIZE || entries.some((e) => !e.readyAt)) return;
+    const players = entries.map((e) => e.userId);
+    try {
+      const pug = await formPug(players[0]!, QUEUE_FORMAT, players, 'rated', isSimulated);
+      await db.queueEntry.updateMany({ where: { readyCheckId }, data: { pugId: pug.id, readyCheckId: null, readyDeadline: null, readyAt: null, lastSeenAt: new Date() } });
+      const url = `${cfg.PUBLIC_URL}/pugs/${pug.id}`;
+      if (!isSimulated) for (const a of await db.discordAccount.findMany({ where: { userId: { in: players } } })) await notifier.enqueue('signup', `queue.found:${pug.id}:${a.discordId}`, { title: 'Match found', description: pug.captains.includes(a.userId) ? `You are a captain. Open the room to pick your team: ${url}` : `Teams are being picked: ${url}`, url, color: COLORS.teal }, false, { discordId: a.discordId });
+    } catch (e) {
+      app.log.error(e, 'queue pop failed');
+      await endReadyCheck(readyCheckId, isSimulated, false);
+    }
+  }
+  const readyTick = setInterval(() => void (async () => {
+    const expired = await db.queueEntry.findMany({ where: { readyDeadline: { lt: new Date() } }, distinct: ['readyCheckId'], select: { readyCheckId: true, isSimulated: true } });
+    if (!expired.length) return;
+    await queueLock.withLock('queue', async () => { for (const e of expired) if (e.readyCheckId) await endReadyCheck(e.readyCheckId, e.isSimulated, true); });
+    queueChanged();
+  })().catch((e) => app.log.warn(`ready check tick failed: ${(e as Error).message}`)), 3000);
+  readyTick.unref();
+  /** Players who closed the page drop out, so a full queue doesn't wait on people who left. Simulated and real players queue apart. */
   async function queueView(userId: string | null, simulated: boolean) {
     const now = new Date();
-    const swept = await db.queueEntry.deleteMany({ where: { OR: [{ pugId: null, lastSeenAt: { lt: new Date(now.getTime() - QUEUE_STALE_MS) } }, { pugId: { not: null }, lastSeenAt: { lt: new Date(now.getTime() - 3600_000) } }] } });
-    if (swept.count) hub.publish('dashboard', 'queue.updated', {});
+    const swept = await db.queueEntry.deleteMany({ where: { OR: [{ pugId: null, readyCheckId: null, lastSeenAt: { lt: new Date(now.getTime() - QUEUE_STALE_MS) } }, { pugId: { not: null }, lastSeenAt: { lt: new Date(now.getTime() - 3600_000) } }] } });
+    if (swept.count) queueChanged();
     const mine = userId ? await db.queueEntry.findUnique({ where: { userId } }) : null;
     if (mine?.pugId) await db.queueEntry.delete({ where: { userId: mine.userId } }); // followed once; coming back to the page starts fresh
     else if (mine) await db.queueEntry.update({ where: { userId: mine.userId }, data: { lastSeenAt: now } });
@@ -618,32 +679,101 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const ids = waiting.map((e) => e.userId);
     const [users, ratings] = await Promise.all([db.user.findMany({ where: { id: { in: ids } } }), ratingsFor(ids)]);
     const byId = new Map(users.map((u) => [u.id, u]));
-    return { total: TEAM_SIZE[QUEUE_FORMAT] * 2, inQueue: !!mine && !mine.pugId, pugId: mine?.pugId ?? null, players: ids.flatMap((id) => { const u = byId.get(id); return u ? [{ id, displayName: u.displayName, avatarUrl: u.avatarUrl, rating: shownRating(ratings.get(id)!) }] : []; }) };
+    const checking = waiting.filter((e) => e.readyCheckId);
+    return { total: QUEUE_SIZE, inQueue: !!mine && !mine.pugId, pugId: mine?.pugId ?? null,
+      readyCheck: checking.length ? { secondsLeft: Math.max(0, Math.ceil((checking[0]!.readyDeadline!.getTime() - now.getTime()) / 1000)), ready: checking.filter((e) => e.readyAt).length, inCheck: !!mine?.readyCheckId, iAmReady: !!mine?.readyAt } : null,
+      players: ids.flatMap((id) => { const u = byId.get(id); return u ? [{ id, displayName: u.displayName, avatarUrl: u.avatarUrl, rating: shownRating(ratings.get(id)!), ready: !!waiting.find((e) => e.userId === id)?.readyAt }] : []; }) };
   }
   app.get('/api/queue', async (req) => queueView(req.user?.id ?? null, req.user?.isSimulated ?? false));
   app.post('/api/queue/join', { preHandler: requireRole('PLAYER'), config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
     const { id: userId, isSimulated } = req.user!;
+    notBanned(req.user!);
+    const active = await activePugOf(userId);
+    if (active) throw Object.assign(new Error(`You are already in PUG #${active.number}. Finish or leave it first.`), { statusCode: 409 });
     await queueLock.withLock('queue', async () => {
       const now = new Date();
+      const entry = await db.queueEntry.findUnique({ where: { userId } });
+      if (entry?.readyCheckId) return;
       await db.queueEntry.upsert({ where: { userId }, create: { userId, isSimulated }, update: { pugId: null, joinedAt: now, lastSeenAt: now, isSimulated } });
-      const fresh = new Date(now.getTime() - QUEUE_STALE_MS);
-      const size = TEAM_SIZE[QUEUE_FORMAT] * 2;
-      const next = await db.queueEntry.findMany({ where: { pugId: null, isSimulated, lastSeenAt: { gte: fresh } }, orderBy: { joinedAt: 'asc' }, take: size });
-      if (next.length < size) return;
-      const players = next.map((e) => e.userId);
-      const pug = await formPug(players[0]!, QUEUE_FORMAT, players, 'rated', isSimulated);
-      await db.queueEntry.updateMany({ where: { userId: { in: players } }, data: { pugId: pug.id, lastSeenAt: now } });
-      const url = `${cfg.PUBLIC_URL}/pugs/${pug.id}`;
-      for (const a of await db.discordAccount.findMany({ where: { userId: { in: players } } })) await notifier.enqueue('signup', `queue.found:${pug.id}:${a.discordId}`, { title: 'Match found', description: pug.captains.includes(a.userId) ? `You are a captain. Open the room to pick your team: ${url}` : `Teams are being picked: ${url}`, url, color: COLORS.teal }, false, { discordId: a.discordId });
+      await startReadyCheck(isSimulated);
     });
-    hub.publish('dashboard', 'queue.updated', {});
+    queueChanged();
     return queueView(userId, isSimulated);
   });
+  app.post('/api/queue/ready', { preHandler: requireRole('PLAYER') }, async (req) => {
+    const { id: userId, isSimulated } = req.user!;
+    await queueLock.withLock('queue', async () => {
+      const entry = await db.queueEntry.findUnique({ where: { userId } });
+      if (!entry?.readyCheckId) throw Object.assign(new Error('There is no ready check for you right now.'), { statusCode: 409 });
+      await db.queueEntry.update({ where: { userId }, data: { readyAt: new Date(), lastSeenAt: new Date() } });
+      await popIfAllReady(entry.readyCheckId, isSimulated);
+    });
+    queueChanged();
+    return queueView(userId, isSimulated);
+  });
+  const removeFromQueue = (userId: string) => queueLock.withLock('queue', async () => {
+    const entry = await db.queueEntry.findUnique({ where: { userId } });
+    if (!entry || entry.pugId) return;
+    await db.queueEntry.delete({ where: { userId } });
+    // Declining ends the check for everyone, but only the person who declined loses their place.
+    if (entry.readyCheckId) await endReadyCheck(entry.readyCheckId, entry.isSimulated, false);
+  });
   app.post('/api/queue/leave', { preHandler: requireRole('PLAYER') }, async (req) => {
-    await queueLock.withLock('queue', () => db.queueEntry.deleteMany({ where: { userId: req.user!.id, pugId: null } }));
-    hub.publish('dashboard', 'queue.updated', {});
+    await removeFromQueue(req.user!.id);
+    queueChanged();
     return queueView(req.user!.id, req.user!.isSimulated);
   });
+  app.post('/api/admin/queue/:userId/remove', { preHandler: requireRole('MODERATOR') }, async (req) => {
+    const { userId } = req.params as { userId: string };
+    await removeFromQueue(userId);
+    await audit(db, req.user!.id, 'queue.remove', 'User', userId);
+    queueChanged();
+    return { ok: true };
+  });
+  app.post('/api/pugs/:id/replace', { preHandler: requireRole('PLAYER') }, async (req) => {
+    const { id } = req.params as { id: string };
+    const b = z.object({ userId: z.string().optional() }).parse(req.body);
+    const outId = b.userId ?? req.user!.id;
+    const pug = await db.pugSession.findUniqueOrThrow({ where: { id } });
+    if (outId !== req.user!.id && req.user!.id !== pug.createdById && !isMod(req.user)) throw Object.assign(new Error('Only the host or a moderator can replace another player.'), { statusCode: 403 });
+    const inId = await queueLock.withLock('queue', async () => {
+      const next = await db.queueEntry.findFirst({ where: { pugId: null, readyCheckId: null, isSimulated: pug.isSimulated }, orderBy: { joinedAt: 'asc' } });
+      if (!next) throw Object.assign(new Error('Nobody is waiting in Find Match to take this spot.'), { statusCode: 409 });
+      await changeFormation(id, { id: req.user!.id, isSimulated: pug.isSimulated }, (current) => replacePlayer(current, outId, next.userId));
+      await db.queueEntry.update({ where: { userId: next.userId }, data: { pugId: id, lastSeenAt: new Date() } });
+      return next.userId;
+    });
+    await audit(db, req.user!.id, 'pug.replace', 'PugSession', id, null, { out: outId, in: inId });
+    if (!pug.isSimulated) { const a = await db.discordAccount.findUnique({ where: { userId: inId } }); if (a) await notifier.enqueue('signup', `queue.found:${id}:${a.discordId}`, { title: 'Match found', description: `You took an open spot: ${cfg.PUBLIC_URL}/pugs/${id}`, url: `${cfg.PUBLIC_URL}/pugs/${id}`, color: COLORS.teal }, false, { discordId: a.discordId }); }
+    queueChanged();
+    return { ok: true, replacedBy: inId };
+  });
+  app.post('/api/pugs/:id/balance', { preHandler: requireRole('PLAYER') }, async (req) => {
+    const { id } = req.params as { id: string };
+    const { agree } = z.object({ agree: z.boolean() }).parse(req.body);
+    const pug = await db.pugSession.findUniqueOrThrow({ where: { id } });
+    const form = pug.formation as unknown as Formation | null;
+    if (!form?.captains.a || !form.captains.b) throw Object.assign(new Error('This room has no captains yet.'), { statusCode: 409 });
+    const ratings = await ratingsFor(form.players);
+    const split = splitTeams(form.players.map((p) => ({ id: p, rating: ratings.get(p)!.rating })), [form.captains.a, form.captains.b], TEAM_SIZE[pug.format as keyof typeof TEAM_SIZE]);
+    await changeFormation(id, req.user!, (current) => applyBalanceVote(current, req.user!.id, agree, split));
+    return { ok: true };
+  });
+
+  // Rooms nobody finished would block their players from queueing forever.
+  const closeDeadPugs = setInterval(() => void (async () => {
+    const hours = (n: number) => new Date(Date.now() - n * 3600_000);
+    const open = await db.pugSession.findMany({ where: { status: { in: ['WAITING', 'DRAFTING', 'LIVE'] }, createdAt: { lt: hours(1) } }, select: { id: true, createdAt: true, matches: { select: { result: { select: { id: true } } } } } });
+    for (const p of open) {
+      const finished = p.matches.some((m) => m.result);
+      const dead = finished || p.createdAt < (p.matches.length ? hours(12) : hours(3));
+      if (!dead) continue;
+      await db.pugSession.update({ where: { id: p.id }, data: finished ? { status: 'COMPLETED', completedAt: new Date() } : { status: 'CANCELLED' } });
+      await audit(db, null, finished ? 'pug.autocomplete' : 'pug.autocancel', 'PugSession', p.id);
+      hub.publish('dashboard', 'pug.updated', { id: p.id });
+    }
+  })().catch((e) => app.log.warn(`PUG cleanup failed: ${(e as Error).message}`)), 5 * 60_000);
+  closeDeadPugs.unref();
 
   const signups = new SignupService(db, notifier, cfg.PUBLIC_URL, (hostId, format, userIds, mode) => formPug(hostId, format, userIds, mode), (channelId, messageId, embed) => (opts.discordSender ? opts.discordSender.edit(channelId, messageId, embed) : Promise.resolve()), (e) => app.log.warn(`signup: ${(e as Error).message}`));
   setInterval(() => void signups.tick().catch((e) => app.log.warn(`signup tick failed: ${(e as Error).message}`)), 60_000).unref();
@@ -660,6 +790,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     return changeFormation(id, req.user!, async (current, size, _pug, tx) => {
       const invite = await tx.pugInvite.findFirst({ where: { token, pugId: id } });
       if (!invite) throw Object.assign(new Error('This invite link is not valid.'), { statusCode: 403 });
+      notBanned(req.user!);
       return applyInvite(current, invite.role as InviteRole, req.user!.id, size);
     });
   });
@@ -974,10 +1105,16 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const active = scored.filter((s) => seasonRows.find((x) => x.id === s.result.seasonId)?.isActive);
     const pointsHistory = active.map((_, i) => standings(active.slice(0, i + 1).map((s) => withBonus(s, s.result)))[0]!.points);
     const skill = (await ratingsFor([id])).get(id)!;
+    const ratingHistory = scored.map((_, i) => ({ date: scored[i]!.result.createdAt, rating: skillRating(scored.slice(0, i + 1)) })).slice(CALIBRATION_MATCHES - 1);
+    const shared = await db.playerStatistic.findMany({ where: { resultId: { in: scored.map((s) => s.resultId) } }, select: { resultId: true, userId: true, team: true, won: true } });
+    const rel = relations(id, shared);
+    const people = new Map((await db.user.findMany({ where: { id: { in: [...rel.teammates, ...rel.rivals].map((r) => r.userId) }, visibility: 'PUBLIC' } })).map((x) => [x.id, x]));
+    const named = (list: typeof rel.teammates) => list.flatMap((r) => { const x = people.get(r.userId); return x ? [{ ...r, displayName: x.displayName, avatarUrl: x.avatarUrl }] : []; });
+    const awards = await db.seasonAward.findMany({ where: { userId: id }, orderBy: { createdAt: 'desc' } });
     const activeSeason = seasonRows.find((x) => x.isActive);
     const table = activeSeason ? await seasonStandings(activeSeason.id) : [];
     const place = table.findIndex((r) => r.userId === id);
-    return { rank: place < 0 ? null : { position: place + 1, of: table.length }, heroes: heroSummary(scored), skill: { rating: shownRating(skill), matches: skill.matches, calibration: CALIBRATION_MATCHES }, user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId, personaName: u.steam.personaName }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
+    return { ratingHistory, teammates: named(rel.teammates), rivals: named(rel.rivals), awards, rank: place < 0 ? null : { position: place + 1, of: table.length }, heroes: heroSummary(scored), skill: { rating: shownRating(skill), matches: skill.matches, calibration: CALIBRATION_MATCHES }, user: publicUser(u), visibility: u.visibility, discord: u.discord && { username: u.discord.username }, steam: u.steam && { accountId: u.steam.accountId, personaName: u.steam.personaName }, seasons, history: history.map((h) => ({ ...h, points: h.result.rated ? matchPoints(withBonus(h, h.result)) : null, heroName: h.heroId ? heroName(h.heroId) : null })), pointsHistory };
   });
   app.patch('/api/me/visibility', { preHandler: requireRole('SPECTATOR') }, async (req) => {
     const b = z.object({ visibility: z.enum(['PUBLIC', 'MEMBERS', 'PRIVATE']) }).parse(req.body);
@@ -997,8 +1134,52 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     await audit(db, req.user!.id, 'user.role', 'User', id, { role: target.role }, { role: b.role });
     return publicUser(u);
   });
+  /** Top three get a lasting badge. Safe to call twice: one award per player per season. */
+  async function awardSeason(seasonId: string) {
+    const season = await db.season.findUniqueOrThrow({ where: { id: seasonId } });
+    const top = (await seasonStandings(seasonId)).slice(0, 3);
+    await db.seasonAward.createMany({ skipDuplicates: true, data: top.map((t, i) => ({ seasonId, seasonName: season.name, userId: t.userId, rank: i + 1, points: t.points, wins: t.wins, losses: t.losses, simulated: season.isSimulated })) });
+    if (top.length) await notifier.enqueue('season.ended', `season.ended:${seasonId}`, { title: `${season.name} has ended`, url: `${cfg.PUBLIC_URL}/leaderboard`, color: COLORS.purple, description: top.map((t, i) => `**${i + 1}.** ${t.user.displayName}: ${t.points} pts (${t.wins}W/${t.losses}L)`).join('\n') }, season.isSimulated);
+  }
+  app.get('/api/admin/users', { preHandler: requireRole('MODERATOR') }, async () => (await db.user.findMany({ where: { isSimulated: false }, orderBy: { displayName: 'asc' }, take: 500 })).map((u) => ({ ...publicUser(u), bannedUntil: u.bannedUntil, banReason: u.banReason })));
+  app.post('/api/admin/users/:id/ban', { preHandler: requireRole('MODERATOR') }, async (req) => {
+    const { id } = req.params as { id: string };
+    const b = z.object({ days: z.number().int().min(0).max(3650), reason: z.string().trim().max(200).default('') }).parse(req.body);
+    const target = await db.user.findUniqueOrThrow({ where: { id } });
+    if (atLeast(target.role as Role, req.user!.role as Role)) throw Object.assign(new Error('You can only ban players ranked below you.'), { statusCode: 403 });
+    const bannedUntil = b.days ? new Date(Date.now() + b.days * 86_400_000) : null;
+    await db.user.update({ where: { id }, data: { bannedUntil, banReason: b.days ? b.reason || null : null } });
+    if (b.days) { await removeFromQueue(id); queueChanged(); }
+    await audit(db, req.user!.id, b.days ? 'user.ban' : 'user.unban', 'User', id, { bannedUntil: target.bannedUntil }, { bannedUntil, reason: b.reason });
+    return { ok: true, bannedUntil };
+  });
+  // Points come from the stats rows, so flipping them corrects the leaderboard. The stored Elo row has no replay, so each delta is mirrored.
+  app.post('/api/admin/matches/:id/correct-result', { preHandler: requireRole('MODERATOR') }, async (req) => {
+    const { id } = req.params as { id: string };
+    const { winner } = z.object({ winner: z.enum(['amber', 'sapphire']) }).parse(req.body);
+    const side = toSide(winner);
+    const result = await db.matchResult.findUnique({ where: { matchId: id } });
+    if (!result) throw Object.assign(new Error('This match has no result to correct.'), { statusCode: 404 });
+    if (result.winner === side) throw Object.assign(new Error('That team is already the winner.'), { statusCode: 409 });
+    await db.$transaction(async (tx) => {
+      await tx.matchResult.update({ where: { id: result.id }, data: { winner: side, verified: true, verifiedById: req.user!.id } });
+      await tx.playerStatistic.updateMany({ where: { resultId: result.id, team: side }, data: { won: true } });
+      await tx.playerStatistic.updateMany({ where: { resultId: result.id, team: { not: side } }, data: { won: false } });
+      for (const t of await tx.ratingTransaction.findMany({ where: { matchId: id } })) {
+        const nowWon = t.delta < 0;
+        await tx.ratingTransaction.update({ where: { id: t.id }, data: { delta: -t.delta, after: t.before - t.delta } });
+        await tx.playerRating.updateMany({ where: { seasonId: t.seasonId, userId: t.userId }, data: { rating: { decrement: 2 * t.delta }, wins: { increment: nowWon ? 1 : -1 }, losses: { increment: nowWon ? -1 : 1 } } });
+      }
+    });
+    pngCache.delete(`match:${id}`);
+    await audit(db, req.user!.id, 'match.result.correct', 'Match', id, { winner: result.winner }, { winner: side });
+    hub.publish('dashboard', 'match.completed', { id });
+    return { ok: true };
+  });
   app.post('/api/admin/seasons', { preHandler: requireRole('ADMIN') }, async (req) => {
     const b = z.object({ name: z.string().min(1).max(64), initialRating: z.number().int().min(100).max(5000).default(1500), kFactor: z.number().int().min(1).max(100).default(24), activate: z.boolean().default(true) }).parse(req.body);
+    const ending = b.activate ? await db.season.findMany({ where: { isActive: true }, select: { id: true } }) : [];
+    for (const e of ending) await awardSeason(e.id);
     const s = await db.$transaction(async (tx) => {
       if (b.activate) await tx.season.updateMany({ where: { isActive: true }, data: { isActive: false, endsAt: new Date() } });
       return tx.season.create({ data: { name: b.name, initialRating: b.initialRating, kFactor: b.kFactor, isActive: b.activate, startsAt: b.activate ? new Date() : null, isSimulated: req.user!.isSimulated } });
@@ -1008,6 +1189,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   });
   app.post('/api/admin/seasons/:id/end', { preHandler: requireRole('ADMIN') }, async (req) => {
     const { id } = req.params as { id: string };
+    await awardSeason(id);
     const s = await db.season.update({ where: { id }, data: { isActive: false, isArchived: true, endsAt: new Date() } });
     await audit(db, req.user!.id, 'season.end', 'Season', id); return s;
   });

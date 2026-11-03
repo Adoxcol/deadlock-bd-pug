@@ -71,6 +71,9 @@ model User {
   displayName       String
   /// Steam picture if linked, otherwise Discord. Kept current by syncAvatar.
   avatarUrl         String?
+  /// Blocks queueing and joining rooms until this time.
+  bannedUntil       DateTime?
+  banReason         String?
   role              Role              @default(PLAYER)
   visibility        ProfileVisibility @default(PUBLIC)
   isSimulated       Boolean           @default(false)
@@ -109,6 +112,8 @@ model Guild {
   announceChannelId String?
   resultsChannelId  String?
   draftChannelId    String?
+  /// The live queue message, edited in place.
+  queueMessageId    String?
   pugs              PugSession[]
 }
 
@@ -163,8 +168,29 @@ model QueueEntry {
   pugId       String?
   joinedAt    DateTime @default(now())
   lastSeenAt  DateTime @default(now())
+  /// Set while this player is in a ready check.
+  readyCheckId  String?
+  readyDeadline DateTime?
+  readyAt       DateTime?
 
   @@index([pugId, joinedAt])
+}
+
+/// Final placing, written once when a season ends, so a badge survives later corrections.
+model SeasonAward {
+  id         String   @id @default(cuid())
+  seasonId   String
+  seasonName String
+  userId     String
+  rank       Int
+  points     Int
+  wins       Int
+  losses     Int
+  simulated  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@unique([seasonId, userId])
+  @@index([userId])
 }
 
 model PugSession {
