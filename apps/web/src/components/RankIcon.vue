@@ -8,5 +8,5 @@ const src = computed(() => `https://assets-bucket.deadlock-api.com/assets-api-re
 </script>
 
 <template>
-  <img :src="src" :alt="rank" :title="rank" :width="size" :height="size" loading="lazy" class="inline-block shrink-0 object-contain align-middle" />
+  <img :src="src" :alt="rank" :title="`${rank} (PUG rank, not your in-game rank)`" :width="size" :height="size" loading="lazy" class="inline-block shrink-0 object-contain align-middle" />
 </template>

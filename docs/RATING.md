@@ -17,3 +17,5 @@ Each match a player earns, rounded to the nearest whole number and never below 0
 ## Underdog bonus
 - The average rating of each team is stored on `MatchResult` when the result is recorded. Results with no stored ratings, such as imported matches, pay no bonus.
 - The lower-rated team earns +1 point per 10 rating of average gap, up to +20, or half that if it loses. The favourite loses nothing.
+
+PUG ranks use Deadlock rank names and badges but are separate from in-game rank, and the site says so.

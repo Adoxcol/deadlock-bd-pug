@@ -99,7 +99,7 @@ const seasonOptions = computed(() => [{ value: '', label: 'Current season' }, ..
           <div class="font-mono text-xs tabular-nums text-muted">{{ min ? `${min}+` : 'Under 900' }}</div>
         </li>
       </ol>
-      <p class="text-xs text-muted">Rating is your average points per match ×20, without bonuses. New players start at 1200 and it settles over about five games.</p>
+      <p class="text-xs text-muted">These are PUG ranks, separate from your in-game Deadlock rank. Rating is your average points per match ×20, without bonuses. New players start at 1200 and it settles over about five games.</p>
     </section>
   </div>
 </template>
