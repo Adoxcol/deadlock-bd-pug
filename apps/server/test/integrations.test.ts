@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { classifyIdentifier } from '../src/tracker/identifier.js';
 import { resolveIdentifier } from '../src/tracker/resolve.js';
 import { createDeadlockApi, type DeadlockApi } from '../src/tracker/deadlockApi.js';
-import { applyLiveEvent, emptyState, isStale, redactForPublic } from '../src/live/normalize.js';
+import { applyLiveEvent, emptyState, isStale, mapFrame, redactForPublic } from '../src/live/normalize.js';
 import { teamElo, expectedScore } from '../src/rating/elo.js';
 import { processResult, MemoryResultsRepo } from '../src/results/process.js';
 import { deadlockLabsProvider, validateImport } from '../src/draft/providers.js';
@@ -61,6 +61,7 @@ describe('live event normalization', () => {
     applyLiveEvent(s, 'player_controller_entity_created', { tick: 10, entity_index: 3, steam_id: 7, steam_name: 'P', team: 2, hero_id: 15 });
     expect(s.players[3]!.kills).toBeNull(); expect(s.players[3]!.souls).toBeNull();
     applyLiveEvent(s, 'player_controller_entity_updated', { tick: 20, entity_index: 3, kills: 4, net_worth: 5000 });
+    expect(s.players[3]!.souls).toBe(5000);
     expect(applyLiveEvent(s, 'player_controller_entity_updated', { tick: 15, entity_index: 3, kills: 1 })).toBe(false);
     expect(s.players[3]!.kills).toBe(4);
     applyLiveEvent(s, 'hero_killed', { tick: 30, victim: 4, attacker: 3 });
@@ -80,7 +81,9 @@ describe('live event normalization', () => {
     applyLiveEvent(s, 'player_pawn_entity_updated', { tick: 2, hero_id: 2, position: [1, 2, 3] }, 1000);
     expect(s.players[1]!.position).toEqual([1, 2, 3]);
     const pub = redactForPublic(s);
-    expect(pub.players[1]!.position).toBeNull(); expect(pub.players[1]!.netWorth).toBeNull();
+    expect(pub.players[1]!.position).toBeNull(); expect(pub.players[1]!.netWorth).toBeNull(); expect(pub.players[1]!.souls).toBeNull();
+    expect(mapFrame(s)).toEqual([{ heroId: 2, team: null, x: 1, y: 2 }]);
+    expect(mapFrame(pub)).toEqual([]);
     expect(isStale(s, 1000 + 20_000)).toBe(true); expect(isStale(s, 2000)).toBe(false);
   });
 });

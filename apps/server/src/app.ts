@@ -165,7 +165,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   app.setErrorHandler((err: Error, _req, reply) => {
     if (err instanceof DraftError) return reply.code(err.code === 'FORBIDDEN' ? 403 : 409).send({ error: err.message, code: err.code });
     if (err instanceof LockBusyError) return reply.code(503).send({ error: err.message });
-    if (err instanceof LobbyError) return reply.code(err.statusCode).send({ error: err.message });
+    if (err instanceof LobbyError) return reply.code(err.statusCode).send({ error: err.message, ...(err.retryAfterSec != null ? { retryAfterSec: err.retryAfterSec } : {}) });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: 'Invalid input', issues: err.issues });
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) app.log.error(err);

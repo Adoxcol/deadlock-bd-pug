@@ -34,7 +34,7 @@ const phaseText = computed(() => {
   if (room.value?.status === 'CANCELLED') return 'This PUG has been cancelled.';
   if (s.phase === 'waiting') return 'Join the player pool, then claim two captain seats.';
   if (s.phase === 'choice') return `${captainName(s.winner)} won the toss. Choose first player pick or side choice.`;
-  if (s.phase === 'side') return `${captainName(s.sideChooser)} chooses Amber or Sapphire. ${captainName(s.first)} picks players first.`;
+  if (s.phase === 'side') return `${captainName(s.sideChooser)} chooses the Hidden King or the Archmother. ${captainName(s.first)} picks players first.`;
   if (s.phase === 'picking') return `${captainName(pickingCaptain(s))} picks next. Pick ${s.picks.length + 1} of ${size.value * 2 - 2}.`;
   return 'Teams are locked. Continue to the hero draft and ready up.';
 });
@@ -86,17 +86,19 @@ onUnmounted(() => clearInterval(timer));
               <button class="btn-ghost" :disabled="pending" @click="command({ kind: 'choice', advantage: 'side' })">Choose side</button>
             </template>
             <template v-if="state.phase === 'side' && seat === state.sideChooser">
-              <button v-for="side in (['amber', 'sapphire'] as const)" :key="side" class="btn-primary" :disabled="pending" @click="command({ kind: 'side', side })">Choose {{ side }}</button>
+              <button v-for="side in (['amber', 'sapphire'] as const)" :key="side" :disabled="pending"
+                :class="['btn rounded-none px-5 text-bg [clip-path:polygon(8px_0,100%_0,calc(100%-8px)_100%,0_100%)]', side === 'amber' ? 'bg-amber-team hover:brightness-110' : 'bg-sapphire-team hover:brightness-110']"
+                @click="command({ kind: 'side', side })">{{ side === 'amber' ? 'Hidden King' : 'Archmother' }}</button>
             </template>
           </div>
           <RouterLink v-if="state.draftId" :to="`/draft/${state.draftId}`" class="btn-primary inline-flex">Open hero draft</RouterLink>
-          <p class="text-xs text-muted">Player picks use snake order: A, B, B, A, A, B… Hero drafting is separate; Amber starts hero bans and picks.</p>
+          <p class="text-xs text-muted">Player picks use snake order: A, B, B, A, A, B… Hero drafting is separate; the Hidden King starts bans and picks.</p>
         </section>
 
         <div class="grid md:grid-cols-2 gap-5">
           <section v-for="t in orderedSeats" :key="t" class="card-ornate p-5 space-y-4">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <h2 class="h-section" :class="state.sides[t] === 'amber' ? 'text-amber-team' : 'text-sapphire-team'">{{ state.phase === 'choice' || state.phase === 'side' ? `Captain ${t.toUpperCase()}` : state.sides[t] }} <span class="text-muted text-sm">{{ state.teams[t].length }}/{{ size }}</span></h2>
+              <h2 class="h-section" :class="state.sides[t] === 'amber' ? 'text-amber-team' : 'text-sapphire-team'">{{ state.phase === 'choice' || state.phase === 'side' ? `Captain ${t.toUpperCase()}` : (state.sides[t] === 'amber' ? 'Hidden King' : 'Archmother') }} <span class="text-muted text-sm">{{ state.teams[t].length }}/{{ size }}</span></h2>
               <span v-if="state.votes.includes(t)" class="text-accent text-xs">Skip agreed</span>
             </div>
             <p class="text-sm break-words">Captain: {{ name(state.captains[t]) }}</p>

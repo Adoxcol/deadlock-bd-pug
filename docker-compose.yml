@@ -25,10 +25,13 @@ services:
     image: redis:7-alpine
     healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 10 }
     restart: unless-stopped
-  # Optional: self-hosted deadlock-api live-events (MIT). Set LIVE_EVENTS_URL=http://live-events:3000
+  # Optional: self-hosted deadlock-api live-events (MIT).
+  # In this compose network set LIVE_EVENTS_URL=http://live-events:3000.
+  # Port 3000 is published so `npm run dev` can use LIVE_EVENTS_URL=http://localhost:3000.
   live-events:
     image: ghcr.io/deadlock-api/deadlock-live-events:latest
     profiles: ["live"]
+    ports: ["127.0.0.1:3000:3000"]
     environment: { DEADLOCK_API_KEY: "${DEADLOCK_API_KEY:-}" }
     restart: unless-stopped
 volumes: { pgdata: {}, caddy_data: {} }

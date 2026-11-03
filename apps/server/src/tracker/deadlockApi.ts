@@ -1,7 +1,15 @@
 /** Thin client for endpoints verified in docs/API_FEASIBILITY.md. Never called from browsers. */
 export type ApiResult<T> =
   | { ok: true; data: T }
-  | { ok: false; status: 'not_found' | 'rate_limited' | 'unavailable'; message: string };
+  | { ok: false; status: 'not_found' | 'rate_limited' | 'unavailable'; message: string; retryAfterSec?: number };
+
+/** Seconds until the API will accept another request, from Retry-After or the 429 body's next_request_in. */
+export function retryAfterSec(res: Response, body: unknown): number | undefined {
+  const header = Number(res.headers.get('retry-after'));
+  if (Number.isFinite(header) && header >= 0) return Math.ceil(header);
+  const n = body && typeof body === 'object' ? (body as { error?: { next_request_in?: unknown } }).error?.next_request_in : undefined;
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.ceil(n) : undefined;
+}
 
 /** Options for POST /v1/matches/custom/create (see docs/API_FEASIBILITY.md). */
 export interface CreateLobbyOptions {
@@ -16,6 +24,15 @@ export interface DeadlockApi {
   createCustomLobby(opts: CreateLobbyOptions): Promise<ApiResult<CreatedLobby>>;
 }
 
+async function apiError(res: Response): Promise<string> {
+  let detail = '';
+  try {
+    const body = await res.json() as { error?: unknown };
+    if (typeof body?.error === 'string') detail = body.error.replace(/\s+/g, ' ').slice(0, 180);
+  } catch { /* a non-JSON error page still has to surface the status */ }
+  return detail ? `Deadlock API returned ${res.status}: ${detail}` : `Deadlock API returned ${res.status}`;
+}
+
 export function createDeadlockApi(baseUrl: string, apiKey?: string, fetchImpl: typeof fetch = fetch): DeadlockApi {
   async function get<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<ApiResult<T>> {
     try {
@@ -26,8 +43,12 @@ export function createDeadlockApi(baseUrl: string, apiKey?: string, fetchImpl: t
         signal: AbortSignal.timeout(init.timeoutMs ?? 10_000),
       });
       if (res.status === 404) return { ok: false, status: 'not_found', message: 'Not found' };
-      if (res.status === 429) return { ok: false, status: 'rate_limited', message: 'Deadlock API rate limit reached' };
-      if (!res.ok) return { ok: false, status: 'unavailable', message: `Deadlock API returned ${res.status}` };
+      if (res.status === 429) {
+        let body: unknown = null;
+        try { body = await res.json(); } catch { /* a 429 without JSON still carries Retry-After */ }
+        return { ok: false, status: 'rate_limited', message: 'Deadlock API rate limit reached', retryAfterSec: retryAfterSec(res, body) };
+      }
+      if (!res.ok) return { ok: false, status: 'unavailable', message: await apiError(res) };
       return { ok: true, data: (await res.json()) as T };
     } catch (e) {
       return { ok: false, status: 'unavailable', message: `Deadlock API unreachable: ${(e as Error).message}` };

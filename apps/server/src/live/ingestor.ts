@@ -1,10 +1,12 @@
-import { applyLiveEvent, emptyState, isStale, redactForPublic, type LiveMatchState } from './normalize.js';
+import { applyLiveEvent, emptyState, isStale, mapFrame, redactForPublic, type LiveMatchState, type MapDot } from './normalize.js';
 import type { Hub } from '../realtime/hub.js';
+
+export interface LiveView { state: LiveMatchState | null; map: MapDot[]; stale: boolean; publicDelaySec: number }
 
 /**
  * One upstream subscription per match regardless of viewer count. Publishes:
- *  - `match:<id>:mod` full state immediately
- *  - `match:<id>`    redacted state, delayed by publicDelaySec (competitive integrity)
+ *  - `match:<id>:mod` full state immediately, including the overhead map
+ *  - `match:<id>`    redacted scoreboard plus a map of x/y only, both delayed by publicDelaySec
  */
 export class LiveManager {
   private states = new Map<string, LiveMatchState>();
@@ -14,10 +16,8 @@ export class LiveManager {
     setInterval(() => this.tickPublic(), 2000).unref();
   }
 
-  get(matchId: string, moderator: boolean) {
-    const s = this.states.get(matchId);
-    if (!s) return null;
-    return { state: moderator ? s : this.delayed(matchId), stale: isStale(s), publicDelaySec: moderator ? 0 : this.publicDelaySec };
+  get(matchId: string, moderator: boolean): LiveView | null {
+    return this.view(matchId, moderator);
   }
 
   isTracking(matchId: string) { return this.aborts.has(matchId); }
@@ -65,7 +65,8 @@ export class LiveManager {
     const h = this.history.get(id) ?? []; h.push({ at: Date.now(), state: structuredClone(s) });
     while (h.length > 2 && h[1]!.at < Date.now() - (this.publicDelaySec + 10) * 1000) h.shift();
     this.history.set(id, h);
-    this.hub.publish(`match:${id}:mod`, 'live.state', { state: s, stale: false });
+    const mod = this.view(id, true);
+    if (mod) this.hub.publish(`match:${id}:mod`, 'live.state', mod);
     if (s.completed) { this.onEnd(id, s); this.stop(id); }
   }
 
@@ -74,19 +75,29 @@ export class LiveManager {
 
   stop(id: string) { this.aborts.get(id)?.abort(); this.aborts.delete(id); }
 
-  private delayed(id: string): LiveMatchState | null {
-    const s = this.states.get(id); if (!s) return null;
-    if (s.completed) return redactForPublic(s);
-    const cutoff = Date.now() - this.publicDelaySec * 1000;
+  /** Moderator sees the current frame. Everyone else sees the newest frame old enough to have passed the delay. A finished match is no longer sensitive. */
+  private view(id: string, moderator: boolean): LiveView | null {
+    const s = this.states.get(id);
+    if (!s) return null;
+    const raw = moderator || s.completed || this.publicDelaySec <= 0 ? s : this.snapshot(id, Date.now() - this.publicDelaySec * 1000);
+    return {
+      state: raw ? (moderator ? raw : redactForPublic(raw)) : null,
+      map: raw ? mapFrame(raw) : [],
+      stale: isStale(s),
+      publicDelaySec: moderator ? 0 : this.publicDelaySec,
+    };
+  }
+
+  private snapshot(id: string, cutoff: number): LiveMatchState | null {
     const h = this.history.get(id) ?? [];
-    const snap = [...h].reverse().find((x) => x.at <= cutoff);
-    return snap ? redactForPublic(snap.state) : null;
+    return [...h].reverse().find((x) => x.at <= cutoff)?.state ?? null;
   }
 
   private tickPublic() {
     for (const id of this.states.keys()) {
       if (this.hub.count(`match:${id}`) === 0) continue;
-      this.hub.publish(`match:${id}`, 'live.state', { state: this.delayed(id), stale: isStale(this.states.get(id)!), publicDelaySec: this.publicDelaySec });
+      const view = this.view(id, false);
+      if (view) this.hub.publish(`match:${id}`, 'live.state', view);
     }
   }
 }

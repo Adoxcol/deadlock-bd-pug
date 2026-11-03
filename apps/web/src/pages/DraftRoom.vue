@@ -446,7 +446,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               </div>
               <div class="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-1 gap-2">
                 <div v-for="(p, i) in slots(team, 'pick')" :key="`p${i}-${p.heroId}`"
-                  :class="['relative overflow-hidden rounded-sm border aspect-[3/4] lg:aspect-auto lg:h-[calc((100vh-20.5rem)/6)] lg:min-h-[64px] bg-gradient-to-br',
+                  :class="['relative overflow-hidden rounded-sm border aspect-[3/4] lg:aspect-auto lg:h-[calc((100vh-23.125rem)/6)] min-[1680px]:h-[calc((100vh-20.5rem)/6)] lg:min-h-[64px] bg-gradient-to-br',
                     team === 'amber' ? 'from-amber-team/[0.08] to-surface/80' : 'from-sapphire-team/[0.08] to-surface/80',
                     p.active ? (team === 'amber' ? 'border-amber-team border-2 animate-glow' : 'border-sapphire-team border-2 animate-glow') : p.heroId !== null ? (team === 'amber' ? 'border-amber-team/50' : 'border-sapphire-team/50') : 'border-line']">
                   <template v-if="p.heroId !== null">
@@ -502,7 +502,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               </div>
 
               <!-- Grid + preview -->
-              <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:h-[max(380px,calc(100vh-28.5rem))]">
+              <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:h-[max(380px,calc(100vh-31.125rem))] min-[1680px]:h-[max(380px,calc(100vh-28.5rem))]">
                 <div class="card p-3 min-w-0 flex flex-col gap-3 xl:min-h-0">
                   <div class="flex flex-wrap items-center gap-1.5">
                     <label class="relative flex-1 min-w-[150px]"><span class="sr-only">Search hero</span>

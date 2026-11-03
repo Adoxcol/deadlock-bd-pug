@@ -4,8 +4,10 @@
  */
 export interface LivePlayer {
   entityIndex: number; steamId: string | null; name: string | null; team: number | null; heroId: number | null;
-  kills: number | null; deaths: number | null; assists: number | null; netWorth: number | null; heroDamage: number | null;
-  souls: null; // not exposed by live-events
+  kills: number | null; deaths: number | null; assists: number | null;
+  /** Soul total. Live-events reports this as `net_worth`; the two fields stay equal. */
+  netWorth: number | null; souls: number | null; heroDamage: number | null;
+  health: number | null; level: number | null;
   position: [number, number, number] | null;
   lastTick: number;
 }
@@ -53,20 +55,26 @@ export function applyLiveEvent(s: LiveMatchState, name: string, data: Record<str
   if (type === 'player_controller' && idx !== null) {
     const prev = s.players[idx];
     if (prev && tick < prev.lastTick) return false; // out-of-order
-    const p: LivePlayer = prev ?? { entityIndex: idx, steamId: null, name: null, team: null, heroId: null, kills: null, deaths: null, assists: null, netWorth: null, heroDamage: null, souls: null, position: null, lastTick: tick };
+    const p: LivePlayer = prev ?? { entityIndex: idx, steamId: null, name: null, team: null, heroId: null, kills: null, deaths: null, assists: null, netWorth: null, souls: null, heroDamage: null, health: null, level: null, position: null, lastTick: tick };
     if (data.steam_id !== undefined) p.steamId = String(data.steam_id);
     if (typeof data.steam_name === 'string') p.name = data.steam_name;
     p.team = num(data.team) ?? p.team; p.heroId = num(data.hero_id) ?? p.heroId;
     p.kills = num(data.kills) ?? p.kills; p.deaths = num(data.deaths) ?? p.deaths; p.assists = num(data.assists) ?? p.assists;
-    p.netWorth = num(data.net_worth) ?? p.netWorth; p.heroDamage = num(data.hero_damage) ?? p.heroDamage;
+    const worth = num(data.net_worth);
+    if (worth !== null) { p.netWorth = worth; p.souls = worth; }
+    p.heroDamage = num(data.hero_damage) ?? p.heroDamage;
     p.lastTick = tick; s.players[idx] = p;
     return true;
   }
-  if (type === 'player_pawn' && Array.isArray(data.position)) {
+  if (type === 'player_pawn') {
     const hero = num(data.hero_id);
-    const p = Object.values(s.players).find((x) => hero !== null && x.heroId === hero);
-    if (p) p.position = data.position as [number, number, number];
-    return !!p;
+    const p = Object.values(s.players).find((x) => hero !== null && x.heroId === hero) ?? (idx !== null ? s.players[idx] : undefined);
+    if (!p) return false;
+    let changed = false;
+    if (Array.isArray(data.position)) { p.position = data.position as [number, number, number]; changed = true; }
+    const hp = num(data.health); if (hp !== null) { p.health = hp; changed = true; }
+    const lvl = num(data.level); if (lvl !== null) { p.level = lvl; changed = true; }
+    return changed;
   }
   if (type === 'team') {
     const t = String(num(data.team) ?? '?');
@@ -90,9 +98,22 @@ export function isStale(s: LiveMatchState, now = Date.now(), thresholdMs = 15_00
   return !s.completed && (s.lastEventAt === null || now - s.lastEventAt > thresholdMs);
 }
 
+/** Dots for the overhead map: team, hero, and x/y only. No names, steam ids, net worth, or height. */
+export interface MapDot { heroId: number | null; team: number | null; x: number; y: number }
+
+export function mapFrame(s: LiveMatchState): MapDot[] {
+  const dots: MapDot[] = [];
+  for (const p of Object.values(s.players)) {
+    const pos = p.position;
+    if (!pos || !Number.isFinite(pos[0]) || !Number.isFinite(pos[1])) continue;
+    dots.push({ heroId: p.heroId, team: p.team, x: pos[0], y: pos[1] });
+  }
+  return dots;
+}
+
 /** Public spectator view: no positions, no net worth (economy info is competitively sensitive). */
 export function redactForPublic(s: LiveMatchState): LiveMatchState {
   const players: Record<number, LivePlayer> = {};
-  for (const [k, p] of Object.entries(s.players)) players[Number(k)] = { ...p, position: null, netWorth: null };
+  for (const [k, p] of Object.entries(s.players)) players[Number(k)] = { ...p, position: null, netWorth: null, souls: null };
   return { ...s, players };
 }

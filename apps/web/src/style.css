@@ -18,6 +18,9 @@
   .btn { @apply inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg font-display text-[15px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60; }
   /* Slanted brass slab, like a stamped ticket. */
   .btn-primary { @apply btn rounded-none bg-primary text-bg hover:bg-[#e4b55c] [clip-path:polygon(8px_0,100%_0,calc(100%-8px)_100%,0_100%)] px-5; }
+  /* Main-nav tickets: same slanted cut as btn-primary. Dark metal until the current page, which is stamped brass. */
+  .nav-tab { @apply inline-flex items-center justify-center gap-2 h-9 px-5 shrink-0 whitespace-nowrap font-display text-[13px] font-bold uppercase tracking-wider rounded-none bg-raised text-muted hover:bg-primary/15 hover:text-text focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 [clip-path:polygon(8px_0,100%_0,calc(100%-8px)_100%,0_100%)]; }
+  .nav-tab-active { @apply bg-primary text-bg hover:bg-[#e4b55c] hover:text-bg; }
   .btn-accent { @apply btn bg-accent text-bg hover:bg-[#86c4ac]; }
   .btn-draft { @apply btn-primary; }
   .btn-ghost { @apply btn border border-line text-text hover:bg-raised hover:border-primary/40; }

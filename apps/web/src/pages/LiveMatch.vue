@@ -12,6 +12,7 @@ import TeamCrest from '../components/draft/TeamCrest.vue';
 import Metric from '../components/Metric.vue';
 import PageState from '../components/PageState.vue';
 import SimBadge from '../components/SimBadge.vue';
+import LiveMap from '../components/LiveMap.vue';
 
 const props = defineProps<{ matchId: string }>();
 const heroes = useHeroes();
@@ -37,6 +38,19 @@ const stale = computed(() => !!live.value?.stale || (lastUpdate.value !== null &
 const sideOf = (t: number) => (t === 2 ? 'amber' : 'sapphire') as 'amber' | 'sapphire';
 const teamName = (t: number) => match.value?.draft?.teamNames?.[sideOf(t)] ?? match.value?.pug?.teams?.find((x: any) => x.side === sideOf(t).toUpperCase())?.name ?? (t === 2 ? 'Team Amber' : 'Team Sapphire');
 const players = (t: number) => Object.values(st.value?.players ?? {}).filter((p: any) => p.team === t).sort((a: any, b: any) => (b.kills ?? 0) - (a.kills ?? 0)) as any[];
+const teamSouls = (t: number) => {
+  const rows = players(t);
+  if (!rows.length || rows.some((p) => p.souls == null)) return null;
+  return rows.reduce((sum, p) => sum + p.souls, 0);
+};
+const showVitals = computed(() => Object.values(st.value?.players ?? {}).some((p: any) => p.health != null || p.level != null));
+const boardCols = computed(() => showVitals.value
+  ? 'grid-cols-[minmax(0,1fr)_2.25rem_2.25rem_2.25rem_4.5rem_4.5rem_3.25rem_2.25rem]'
+  : 'grid-cols-[minmax(0,1fr)_2.25rem_2.25rem_2.25rem_4.5rem_4.5rem]');
+const who = (idx: unknown) => st.value?.players?.[Number(idx)] ?? null;
+const heroName = (heroId: number | null | undefined) => heroes.byId(heroId ?? -1)?.name ?? 'Unknown';
+const heroSrc = (heroId: number | null | undefined) => heroes.byId(heroId ?? -1)?.imageUrl;
+const mapDots = computed(() => (live.value?.map ?? []).map((d: { heroId: number | null; team: number | null; x: number; y: number }) => ({ ...d, label: `${d.team === 2 ? 'Amber' : d.team === 3 ? 'Sapphire' : 'Player'} · ${heroes.byId(d.heroId)?.name ?? 'Unknown hero'}` })));
 const icon = (k: string) => ({ kill: Skull, objective: Castle, pause: Pause, resume: Play, end: Flag } as any)[k];
 
 async function load() {
@@ -76,13 +90,21 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
 
       <!-- Score banner -->
       <section class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 sm:gap-6 border border-line/70 px-4 sm:px-6 py-4 bg-[linear-gradient(90deg,rgba(232,163,58,.16),rgba(14,12,10,.6)_42%,rgba(14,12,10,.6)_58%,rgba(90,143,224,.16))]">
-        <div v-for="(t, i) in [2, 3]" :key="t" :class="['flex items-center gap-3 min-w-0', i === 1 && 'order-3 flex-row-reverse text-right']">
-          <TeamCrest :team="sideOf(t)" :size="44" class="shrink-0 hidden sm:block" />
-          <div class="min-w-0">
-            <div :class="['font-display text-lg sm:text-2xl uppercase truncate', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</div>
-            <div class="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-muted">{{ players(t).length }} players</div>
+        <div v-for="(t, i) in [2, 3]" :key="t" :class="['min-w-0', i === 1 && 'order-3']">
+          <div :class="['flex items-center gap-2 sm:gap-3', i === 1 && 'flex-row-reverse text-right']">
+            <TeamCrest :team="sideOf(t)" :size="44" class="shrink-0 hidden sm:block" />
+            <div class="min-w-0">
+              <div :class="['font-display text-lg sm:text-2xl uppercase truncate', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</div>
+              <div class="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-muted">{{ players(t).length }} players</div>
+            </div>
+            <div :class="['shrink-0 font-display text-4xl sm:text-6xl tabular-nums leading-none', i === 1 ? 'mr-auto' : 'ml-auto', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ st?.teams?.[String(t)]?.score ?? '–' }}</div>
           </div>
-          <div :class="['font-display text-5xl sm:text-6xl tabular-nums leading-none', i === 1 ? 'mr-auto' : 'ml-auto', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ st?.teams?.[String(t)]?.score ?? '–' }}</div>
+          <div :class="['mt-1.5', i === 1 ? 'text-left' : 'text-right']">
+            <div class="inline-block text-center">
+              <div :class="['font-mono text-xs sm:text-sm font-bold tabular-nums leading-none', t === 2 ? 'text-amber-team' : 'text-sapphire-team']"><Metric :value="teamSouls(t)" :reason="modView ? undefined : 'Hidden on the public scoreboard'" /></div>
+              <div class="mt-0.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-muted">souls</div>
+            </div>
+          </div>
         </div>
         <div class="order-2 text-center">
           <div class="font-display text-2xl tabular-nums">{{ duration(st?.gameTime) }}</div>
@@ -97,6 +119,8 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
       </div>
       <div v-if="stale && status !== 'completed'" class="card border-warn/40 px-4 py-2 text-sm text-warn flex items-center gap-2" role="status"><AlertTriangle class="w-4 h-4" />Data may be stale — no update received in over 15 seconds.</div>
 
+      <LiveMap :dots="mapDots" :delayed="!modView && (live?.publicDelaySec ?? 0) > 0" :unavailable="match.trackingState === 'LIVE_UNAVAILABLE'" />
+
       <!-- Tabs -->
       <div class="flex gap-1 border-b border-line">
         <button v-for="t in (['scoreboard', 'timeline', 'draft'] as const)" :key="t" :aria-pressed="tab === t"
@@ -108,19 +132,35 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
           <section v-for="t in [2, 3]" :key="t" :class="['card-ornate overflow-hidden border-t-2', t === 2 ? '!border-t-amber-team' : '!border-t-sapphire-team']">
             <h2 :class="['px-4 pt-3 pb-2 text-lg', t === 2 ? 'text-amber-team' : 'text-sapphire-team']">{{ teamName(t) }}</h2>
             <div class="overflow-x-auto">
-              <table class="w-full table-compact">
-                <thead><tr><th>Player</th><th class="text-right">K</th><th class="text-right">D</th><th class="text-right">A</th><th class="text-right" title="Unspent souls are not exposed by the live data source">Souls</th><th class="text-right">Net worth</th><th class="text-right">Hero dmg</th></tr></thead>
-                <tbody>
-                  <tr v-for="p in players(t)" :key="p.entityIndex" class="hover:bg-raised/50">
-                    <td><div class="flex items-center gap-2.5 min-w-[160px]"><HeroCard size="xs" :name="heroes.byId(p.heroId)?.name ?? '?'" :src="heroes.byId(p.heroId)?.imageUrl" />
-                      <div class="min-w-0"><div class="font-semibold truncate max-w-[140px]">{{ p.name ?? 'Unknown' }}</div><div class="font-mono text-[10px] uppercase tracking-wider text-muted">{{ heroes.byId(p.heroId)?.name ?? 'Unknown hero' }}</div></div></div></td>
-                    <td class="text-right"><Metric :value="p.kills" /></td><td class="text-right"><Metric :value="p.deaths" /></td><td class="text-right"><Metric :value="p.assists" /></td>
-                    <td class="text-right"><Metric :value="p.souls" reason="Not exposed by deadlock-api live-events" /></td>
-                    <td class="text-right"><Metric :value="p.netWorth" :reason="modView ? undefined : 'Hidden in public view during the match'" /></td>
-                    <td class="text-right"><Metric :value="p.heroDamage" /></td>
-                  </tr>
-                </tbody>
-              </table>
+              <div :class="['grid items-center gap-x-2 px-3 h-8 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-muted border-b border-line', boardCols]">
+                <span>Player</span><span class="text-right">K</span><span class="text-right">D</span><span class="text-right">A</span>
+                <span class="text-right" title="Soul total. The live feed reports this as net worth.">Souls</span>
+                <span class="text-right" title="Damage dealt to heroes">Hero dmg</span>
+                <template v-if="showVitals"><span class="text-right">HP</span><span class="text-right">Lv</span></template>
+              </div>
+              <div v-for="p in players(t)" :key="p.entityIndex" :class="['grid items-center gap-x-2 px-3 py-1.5 border-b border-line/50 hover:bg-raised/50', boardCols]">
+                <div class="flex items-center gap-2 min-w-0">
+                  <HeroCard size="xs" class="shrink-0" :name="heroName(p.heroId)" :src="heroSrc(p.heroId)" />
+                  <div class="min-w-0">
+                    <div class="font-semibold truncate">{{ p.name ?? 'Unknown' }}</div>
+                    <div class="font-mono text-[10px] uppercase tracking-wider text-muted truncate">{{ heroName(p.heroId) }}</div>
+                  </div>
+                </div>
+                <span class="text-right font-mono text-sm tabular-nums"><Metric :value="p.kills" /></span>
+                <span class="text-right font-mono text-sm tabular-nums"><Metric :value="p.deaths" /></span>
+                <span class="text-right font-mono text-sm tabular-nums"><Metric :value="p.assists" /></span>
+                <span class="text-right font-mono text-sm tabular-nums"><Metric :value="p.souls" :reason="modView ? undefined : 'Hidden on the public scoreboard'" /></span>
+                <span class="text-right font-mono text-sm tabular-nums"><Metric :value="p.heroDamage" /></span>
+                <template v-if="showVitals">
+                  <span class="text-right font-mono text-sm tabular-nums"><Metric :value="p.health" /></span>
+                  <span class="text-right font-mono text-sm tabular-nums"><Metric :value="p.level" /></span>
+                </template>
+              </div>
+              <div :class="['grid items-center gap-x-2 px-3 py-2 bg-raised/40', boardCols]">
+                <span class="font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Team souls</span>
+                <span /><span /><span />
+                <span :class="['text-right font-mono text-sm font-bold tabular-nums', t === 2 ? 'text-amber-team' : 'text-sapphire-team']"><Metric :value="teamSouls(t)" :reason="modView ? undefined : 'Hidden on the public scoreboard'" /></span>
+              </div>
             </div>
           </section>
         </div>
@@ -129,12 +169,20 @@ function toggleView() { modView.value = !modView.value; live.value = null; subsc
       <section v-else-if="tab === 'timeline'" class="card-ornate p-4">
         <PageState :empty="!st?.timeline?.length" empty-text="No timeline events yet.">
           <ol class="space-y-1 max-h-[60vh] overflow-y-auto">
-            <li v-for="e in [...st.timeline].reverse()" :key="e.key" class="flex items-center gap-3 text-sm py-1 border-b border-line/40 animate-fade-up">
-              <span class="w-12 font-mono text-xs text-muted tabular-nums">{{ duration(e.gameTime) }}</span>
-              <component :is="icon(e.kind)" :class="['w-4 h-4', e.kind === 'kill' ? 'text-danger' : e.kind === 'objective' ? 'text-primary' : 'text-muted']" />
-              <span v-if="e.kind === 'kill'"><b>{{ st.players[e.detail.attacker]?.name ?? 'Someone' }}</b> killed <b>{{ st.players[e.detail.victim]?.name ?? 'someone' }}</b></span>
-              <span v-else-if="e.kind === 'objective'">Objective destroyed <span class="text-muted">({{ e.detail.type.replace(/_/g, ' ') }})</span></span>
-              <span v-else>{{ e.kind === 'end' ? 'Match completed' : `Game ${e.kind}d` }}</span>
+            <li v-for="e in [...st.timeline].reverse()" :key="e.key" class="flex items-center gap-2.5 text-sm py-1.5 border-b border-line/40 animate-fade-up min-w-0">
+              <span class="w-12 shrink-0 font-mono text-xs text-muted tabular-nums">{{ duration(e.gameTime) }}</span>
+              <template v-if="e.kind === 'kill'">
+                <HeroCard size="xs" class="shrink-0" :name="heroName(who(e.detail.attacker)?.heroId)" :src="heroSrc(who(e.detail.attacker)?.heroId)" />
+                <span class="font-semibold truncate">{{ who(e.detail.attacker)?.name ?? 'Someone' }}</span>
+                <span class="shrink-0 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-danger">killed</span>
+                <HeroCard size="xs" class="shrink-0" :name="heroName(who(e.detail.victim)?.heroId)" :src="heroSrc(who(e.detail.victim)?.heroId)" />
+                <span class="font-semibold truncate">{{ who(e.detail.victim)?.name ?? 'Someone' }}</span>
+              </template>
+              <template v-else>
+                <component :is="icon(e.kind)" :class="['w-4 h-4 shrink-0', e.kind === 'objective' ? 'text-primary' : 'text-muted']" />
+                <span v-if="e.kind === 'objective'">Objective destroyed <span class="text-muted">({{ String(e.detail.type).replace(/_/g, ' ') }})</span></span>
+                <span v-else>{{ e.kind === 'end' ? 'Match completed' : `Game ${e.kind}d` }}</span>
+              </template>
             </li>
           </ol>
         </PageState>

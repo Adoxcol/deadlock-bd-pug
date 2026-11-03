@@ -1,4 +1,4 @@
-export class ApiError extends Error { constructor(public status: number, message: string, public code?: string) { super(message); } }
+export class ApiError extends Error { constructor(public status: number, message: string, public code?: string, public retryAfterSec?: number) { super(message); } }
 
 export async function api<T = unknown>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -7,6 +7,6 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
     body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
   });
   const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data?.code);
+  if (!res.ok) throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data?.code, typeof data?.retryAfterSec === 'number' ? data.retryAfterSec : undefined);
   return data as T;
 }

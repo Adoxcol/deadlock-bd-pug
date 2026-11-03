@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { callbackUrlFor, hashSecret, parseCallbackMatchId, verifyCallbackSecret } from '../src/lobby/callback.js';
+import { minRosterSize } from '../src/lobby/service.js';
 import { createDeadlockApi } from '../src/tracker/deadlockApi.js';
 
 describe('lobby callback helpers', () => {
@@ -42,11 +43,18 @@ describe('createCustomLobby (mocked Deadlock API)', () => {
     expect(sent).toMatchObject({ callback_url: 'https://x/cb', server_region: 'singapore', min_roster_size: 12, is_publicly_visible: true });
     expect(headers['X-API-Key']).toBe('key-1');
   });
+  it('asks for 2 players on a 2v2, because a minimum of 4 is rejected', () => {
+    expect(minRosterSize(4)).toBe(2);
+    expect(minRosterSize(8)).toBe(8);
+    expect(minRosterSize(12)).toBe(12);
+  });
   it('maps rate limits and malformed responses to errors', async () => {
-    const limited = createDeadlockApi('https://m.invalid', undefined, (async () => new Response('{}', { status: 429 })) as unknown as typeof fetch);
-    expect(await limited.createCustomLobby({})).toMatchObject({ ok: false, status: 'rate_limited' });
+    const limited = createDeadlockApi('https://m.invalid', undefined, (async () => new Response(JSON.stringify({ status: 429, error: { type: 'IP', next_request_in: 3066 } }), { status: 429, headers: { 'retry-after': '3066' } })) as unknown as typeof fetch);
+    expect(await limited.createCustomLobby({})).toMatchObject({ ok: false, status: 'rate_limited', retryAfterSec: 3066 });
     const empty = createDeadlockApi('https://m.invalid', undefined, (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch);
     expect(await empty.createCustomLobby({})).toMatchObject({ ok: false, status: 'unavailable' });
+    const failed = createDeadlockApi('https://m.invalid', undefined, (async () => new Response(JSON.stringify({ status: 500, error: 'Internal server error: Failed to create party' }), { status: 500 })) as unknown as typeof fetch);
+    expect(await failed.createCustomLobby({})).toMatchObject({ ok: false, status: 'unavailable', message: 'Deadlock API returned 500: Internal server error: Failed to create party' });
   });
 });
 

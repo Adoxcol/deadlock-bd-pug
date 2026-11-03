@@ -3,6 +3,15 @@ import type { DeadlockApi } from '../tracker/deadlockApi.js';
 import { callbackUrlFor, hashSecret } from './callback.js';
 
 export const BOT_LIFETIME_MS = 15 * 60_000; // deadlock-api: "The bot will leave the match 15 minutes after creation"
+
+/**
+ * Minimum players before the custom lobby can start.
+ * Verified 2026-10-31: normal-mode `min_roster_size` 2, 6, 8, 10 and 12 create a party;
+ * 4 returns HTTP 500 "Failed to create party". A 2v2 therefore asks for 2, which still lets four players start.
+ */
+export function minRosterSize(totalPlayers: number): number {
+  return totalPlayers === 4 ? 2 : totalPlayers;
+}
 const POLL_MS = 15_000;
 const GIVE_UP_MS = 60 * 60_000; // keep polling a while after the bot leaves: the match may have started late
 
@@ -11,7 +20,7 @@ export interface LobbyView {
   state: string; note: string | null; expiresAt: string | null; webhook: boolean;
 }
 
-export class LobbyError extends Error { constructor(message: string, public statusCode = 400) { super(message); } }
+export class LobbyError extends Error { constructor(message: string, public statusCode = 400, public retryAfterSec?: number) { super(message); } }
 
 /**
  * Creates Deadlock custom lobbies via the deadlock-api bot and resolves them to Match IDs, by webhook when we are
@@ -49,20 +58,21 @@ export class LobbyService {
     // Reserve the row first so the webhook URL can carry its id.
     const row = await this.db.match.create({ data: { draftId: input.draftId, pugId: input.pugId, trackingState: 'WAITING_FOR_LOBBY', trackingNote: 'Creating lobby via the Deadlock API…', lobbyCreatedById: input.createdById } });
     const callbackUrl = callbackUrlFor(this.opts.publicUrl, row.id);
+    const roster = minRosterSize(input.teamSize * 2);
     const r = await this.api.createCustomLobby({
-      callbackUrl, serverRegion: this.opts.region, minRosterSize: input.teamSize * 2,
+      callbackUrl, serverRegion: this.opts.region, minRosterSize: roster,
       isPubliclyVisible: true, // live spectating is more likely to work; unverified for private lobbies
       duplicateHeroesEnabled: input.allowDuplicateHeroes,
     });
     if (!r.ok) {
       await this.db.match.delete({ where: { id: row.id } });
-      throw new LobbyError(r.status === 'rate_limited' ? 'The Deadlock API lobby limit was reached (10 per hour per server without an API key). Try again later, or create the lobby in-game and use the Tracker.' : `Could not create the lobby: ${r.message}`, r.status === 'rate_limited' ? 429 : 502);
+      throw new LobbyError(r.status === 'rate_limited' ? 'The Deadlock API lobby limit was reached (10 per hour per server without an API key). Create the lobby in-game and use the Tracker, or wait for the next request.' : `Could not create the lobby: ${r.message}`, r.status === 'rate_limited' ? 429 : 502, r.status === 'rate_limited' ? r.retryAfterSec : undefined);
     }
     const updated = await this.db.match.update({ where: { id: row.id }, data: {
       partyId: r.data.partyId, partyCode: r.data.partyCode, callbackSecretHash: r.data.callbackSecret ? hashSecret(r.data.callbackSecret) : null,
       lobbyExpiresAt: new Date(this.now() + BOT_LIFETIME_MS), trackingState: 'LOBBY_FOUND',
       // Never put the party code in the note: notes are visible to spectators.
-      trackingNote: `Lobby created. Start the match within 15 minutes. ${callbackUrl ? 'The website is notified when it starts.' : 'Match detection uses polling (no public HTTPS URL configured).'}`,
+      trackingNote: `Lobby created. Start the match within 15 minutes.${roster < input.teamSize * 2 ? ' The game rejects a minimum of 4 players, so this lobby can start once 2 have joined.' : ''} ${callbackUrl ? 'The website is notified when it starts.' : 'Match detection uses polling (no public HTTPS URL configured).'}`,
     } });
     return this.view(updated);
   }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Gamepad2, Copy, Radio, Loader2, AlertTriangle, Clock, RefreshCw } from 'lucide-vue-next';
-import { api } from '../../lib/api';
+import { ApiError, api } from '../../lib/api';
 import { realtime } from '../../lib/ws';
 import StatusBadge from '../StatusBadge.vue';
 import { useSession } from '../../stores/session';
@@ -14,19 +14,25 @@ const lobby = ref<Lobby | null>(null);
 const loaded = ref(false);
 const busy = ref(false);
 const error = ref<string | null>(null);
+const retryAt = ref<number | null>(null);
 const now = ref(Date.now());
 
 const matched = computed(() => !!lobby.value?.deadlockMatchId);
 const msLeft = computed(() => (lobby.value?.expiresAt ? new Date(lobby.value.expiresAt).getTime() - now.value : 0));
 const botGone = computed(() => !!lobby.value && !matched.value && msLeft.value <= 0);
 const countdown = computed(() => { const s = Math.max(0, Math.floor(msLeft.value / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; });
+const retryLeft = computed(() => (retryAt.value == null ? 0 : Math.max(0, retryAt.value - now.value)));
+const retryLabel = computed(() => { const s = Math.ceil(retryLeft.value / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; });
 const statusKey = computed(() => (matched.value ? 'live' : botGone.value ? 'unavailable' : 'waiting'));
 
 async function load() { try { lobby.value = (await api<{ lobby: Lobby | null }>(`/drafts/${props.draftId}/lobby`)).lobby; } catch (e) { error.value = (e as Error).message; } finally { loaded.value = true; } }
 async function create() {
   busy.value = true; error.value = null;
-  try { lobby.value = (await api<{ lobby: Lobby }>(`/drafts/${props.draftId}/lobby`, { method: 'POST', body: {} })).lobby; }
-  catch (e) { error.value = (e as Error).message; } finally { busy.value = false; }
+  try { lobby.value = (await api<{ lobby: Lobby }>(`/drafts/${props.draftId}/lobby`, { method: 'POST', body: {} })).lobby; retryAt.value = null; }
+  catch (e) {
+    error.value = (e as Error).message;
+    retryAt.value = e instanceof ApiError && e.retryAfterSec != null ? Date.now() + e.retryAfterSec * 1000 : null;
+  } finally { busy.value = false; }
 }
 async function copyCode() { if (!lobby.value?.partyCode) return; await navigator.clipboard?.writeText(lobby.value.partyCode).catch(() => {}); emit('copied', 'Party code'); }
 
@@ -55,8 +61,8 @@ onUnmounted(() => { unsub(); clearInterval(tick); clearInterval(poll); });
       <p v-if="botGone" class="text-sm text-warn flex items-center gap-2"><Clock class="w-4 h-4" />The lobby bot left (15-minute limit) and no match was detected.</p>
       <p class="text-sm text-muted">Create a private custom match in Deadlock. Everyone joins with the party code, picks the hero they were assigned and starts the game. The website detects the match automatically.</p>
       <p v-if="simulated" class="text-xs text-warn">This draft uses simulated data, but the lobby is a real Deadlock lobby.</p>
-      <button v-if="canCreate" class="btn-primary" :disabled="busy" @click="create">
-        <component :is="busy ? Loader2 : botGone ? RefreshCw : Gamepad2" :class="['w-4 h-4', busy && 'animate-spin']" />{{ busy ? 'Creating lobby… (can take ~30s)' : botGone ? 'Create a new lobby' : 'Create Deadlock lobby' }}
+      <button v-if="canCreate" class="btn-primary" :disabled="busy || retryLeft > 0" @click="create">
+        <component :is="busy ? Loader2 : botGone ? RefreshCw : Gamepad2" :class="['w-4 h-4', busy && 'animate-spin']" />{{ busy ? 'Creating lobby… (can take ~30s)' : retryLeft > 0 ? `Next request in ${retryLabel}` : botGone ? 'Create a new lobby' : 'Create Deadlock lobby' }}
       </button>
       <p v-else class="text-sm text-muted">Waiting for a captain to create the lobby.</p>
     </template>
@@ -91,6 +97,7 @@ onUnmounted(() => { unsub(); clearInterval(tick); clearInterval(poll); });
       <p v-if="!matched && !lobby.webhook" class="text-xs text-muted">Detection checks every 15 seconds and can take a minute after the game starts.</p>
     </template>
 
+    <p v-if="retryLeft > 0" class="text-sm text-warn flex items-center gap-2" role="status"><Clock class="w-4 h-4 shrink-0" />Lobby limit reached. Next request in {{ retryLabel }}.</p>
     <p v-if="error" class="text-sm text-danger flex items-center gap-2" role="alert"><AlertTriangle class="w-4 h-4 shrink-0" />{{ error }}</p>
     <p class="text-xs text-muted">Lobbies are created by the deadlock-api.com bot. Can't use it? Create the lobby in-game and a moderator can enter the Match ID in the <RouterLink to="/tracker" class="text-accent hover:underline">Tracker</RouterLink>.</p>
   </section>
