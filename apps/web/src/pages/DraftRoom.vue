@@ -636,7 +636,7 @@ const teamBorder = (t: Side) => (t === 'amber' ? '!border-t-amber-team' : '!bord
               </div>
             </template>
           </div>
-          <LobbyPanel v-if="!broadcast" :draft-id="rec.id" :can-create="!spectate && (!!mySeat || isMod)" :simulated="rec.simulated" @copied="flash" />
+          <LobbyPanel v-if="!broadcast" :draft-id="rec.id" :can-create="!spectate && (!!mySeat || isMod || [...rec.state.members.amber, ...rec.state.members.sapphire].includes(session.user?.id ?? ''))" :simulated="rec.simulated" @copied="flash" />
           <div class="flex flex-wrap justify-center gap-2 [&>*]:-skew-x-6">
             <button class="btn-ghost" @click="copy(resultText, 'Result')"><Copy class="w-4 h-4" />Copy result</button>
             <button class="btn-ghost" @click="copy(roomLink, 'Link')"><Link2 class="w-4 h-4" />Copy link</button>

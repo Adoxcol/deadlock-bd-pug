@@ -105,7 +105,7 @@ async function submit() {
           <template v-else><FlaskConical class="w-5 h-5 text-warn shrink-0" /><span class="text-sm">Simulated — {{ m.result.rated ? 'rated in the simulation season only' : 'not rated' }}</span></template>
         </div>
       </div>
-      <div v-else class="card px-4 py-3 flex items-center gap-2 text-sm text-muted"><Hourglass class="w-4 h-4 shrink-0" />Match data pending. Final statistics for private custom matches may not be published; a moderator can submit the result below.</div>
+      <div v-else class="card px-4 py-3 flex items-center gap-2 text-sm text-muted"><Hourglass class="w-4 h-4 shrink-0" />Match data pending. The result is recorded automatically once official data is published. If it never is, a moderator can submit it below.</div>
 
       <!-- Scoreboards -->
       <div v-if="m.result" class="space-y-4">

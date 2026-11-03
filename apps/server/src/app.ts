@@ -25,7 +25,7 @@ import { atLeast, canAssignRole, type Role, ROLES } from './auth/rbac.js';
 import { discordAuthorizeUrl, exchangeDiscordCode } from './auth/discord.js';
 import { steamLoginUrl, verifySteamAssertion } from './auth/steam.js';
 import { linkSteam } from './auth/linkSteam.js';
-import { importMatch, previewMatchImport } from './results/importMatch.js';
+import { importKnownMatch, importMatch, previewMatchImport, recordLobbyResult } from './results/importMatch.js';
 import { fetchHeroes, BUILTIN_HEROES, type Hero } from './heroes.js';
 import { normalizeReplay } from './tracker/replay.js';
 import { matchPlayers, normalizeMetadata, simulateDetails } from './tracker/matchStats.js';
@@ -115,7 +115,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
       const started = live.start(m.id, m.deadlockMatchId);
       m = await db.match.update({ where: { id: m.id }, data: {
         trackingState: started ? 'LIVE_AVAILABLE' : 'LIVE_UNAVAILABLE', startedAt: m.startedAt ?? new Date(),
-        trackingNote: started ? 'Subscribed to live-events. Data for private custom matches is unverified and may not arrive.' : 'LIVE_EVENTS_URL not configured — live stats unavailable. Submit the result when the match ends.',
+        trackingNote: started ? 'Subscribed to live-events. Data for private custom matches is unverified and may not arrive.' : 'LIVE_EVENTS_URL not configured — live stats unavailable. The result is recorded when official data is published.',
       } });
       await notifier.enqueue('match.started', `match.started:${m.id}`, { title: `Match ${m.deadlockMatchId} started`, url: `${cfg.PUBLIC_URL}/matches/${m.id}/live`, color: COLORS.teal }, m.isSimulated);
     }
@@ -154,7 +154,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   const lobbies = new LobbyService(db, api, { publicUrl: cfg.PUBLIC_URL, region: cfg.DEADLOCK_LOBBY_REGION, log: app.log }, onMatchStarted);
   lobbies.start();
 
-  /** Fills a result's stat rows from final metadata. Never creates a result, so ratings stay a moderator's decision. */
+  /** Fills a result's stat rows from final metadata. Never creates a result. */
   async function importMatchStats(matchRowId: string): Promise<{ status: 'imported'; players: number } | { status: 'unpublished' | 'rate_limited' | 'unavailable'; message: string }> {
     const m = await db.match.findUnique({ where: { id: matchRowId }, include: { result: { include: { stats: true } } } });
     if (!m?.deadlockMatchId || !m.result) return { status: 'unavailable', message: 'This match has no Match ID or result yet.' };
@@ -183,6 +183,30 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     }
   })().catch((e) => app.log.warn(`stats import failed: ${(e as Error).message}`)), 5 * 60_000);
   statsPoll.unref();
+
+  // Site-created lobbies finish on their own: once official data is published, the result is recorded. A running match has no winner yet, so it just waits.
+  const resultTried = new Map<string, number>();
+  const resultPoll = setInterval(() => void (async () => {
+    const now = Date.now();
+    const rows = await db.match.findMany({ where: { deadlockMatchId: { not: null }, isSimulated: false, result: null, createdAt: { gt: new Date(now - 48 * 3600_000) }, trackingState: { not: 'MANUAL_REQUIRED' }, OR: [{ partyId: { not: null } }, { draftId: { not: null } }, { pugId: { not: null } }] }, orderBy: { createdAt: 'asc' }, take: 20 });
+    // Metadata requests are scarce: check often at first, then hourly for matches that may never publish.
+    const due = rows.filter((m) => now - (resultTried.get(m.id) ?? 0) > (now - m.createdAt.getTime() < 6 * 3600_000 ? 5 : 60) * 60_000).slice(0, 3);
+    for (const m of due) {
+      resultTried.set(m.id, now);
+      const draft = m.draftId ? await drafts.get(m.draftId) : null;
+      try {
+        if (!await recordLobbyResult(db, api, m.id, draft?.state.assignments ?? [])) continue;
+        await audit(db, null, 'match.result.auto', 'Match', m.id, null, { deadlockMatchId: m.deadlockMatchId });
+        await notifier.enqueue('match.result', `match.result:${m.id}`, { title: 'Match result recorded', description: 'Official data from the Deadlock API', url: `${cfg.PUBLIC_URL}/matches/${m.id}`, color: COLORS.teal }, false);
+        hub.publish('dashboard', 'match.completed', { id: m.id });
+      } catch (e) {
+        const code = (e as { statusCode?: number }).statusCode;
+        if (code === 429) break;
+        if (code !== 404 && code !== 422) app.log.warn(`auto result failed for ${m.id}: ${(e as Error).message}`);
+      }
+    }
+  })().catch((e) => app.log.warn(`auto result poll failed: ${(e as Error).message}`)), 2 * 60_000);
+  resultPoll.unref();
 
   // ---------- Plugins ----------
   await app.register(cookie, { secret: cfg.SESSION_SECRET });
@@ -613,8 +637,7 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
     const { id } = req.params as { id: string };
     const rec = await drafts.get(id);
     if (!rec) throw Object.assign(new Error('Draft not found'), { statusCode: 404 });
-    const isCaptain = Object.values(rec.state.captains).includes(req.user!.id);
-    if (!isCaptain && !isMod(req.user)) throw Object.assign(new Error('Only a captain or moderator can create the lobby'), { statusCode: 403 });
+    if (!inDraft(rec, req.user)) throw Object.assign(new Error('Only players in this draft can create the lobby'), { statusCode: 403 });
     if (rec.state.status !== 'completed') throw Object.assign(new Error('Finish the draft first'), { statusCode: 409 });
     // Serialize per draft so two captains clicking at once create one lobby.
     const lock = redis ? new RedisLock(redis, 60_000, 50_000) : new MemoryLock();
@@ -928,7 +951,12 @@ export async function buildApp(cfg: Config, opts: { discordSender?: Sender | nul
   }
 
   app.addHook('onClose', async () => { drafts.shutdown(); lobbies.stop(); clearInterval(statsPoll); await db.$disconnect(); redis?.disconnect(); });
-  return { app, db, hub, drafts, createPug, leaderboardTop: async (n: number) => {
+  const importFromDiscord = async (matchId: string, userId: string) => {
+    const out = await importKnownMatch(db, api, { matchId, verifiedById: userId });
+    if (out.status === 'imported') await audit(db, userId, 'match.import', 'Match', out.id, null, { deadlockMatchId: matchId, via: 'discord' });
+    return out;
+  };
+  return { app, db, hub, drafts, createPug, importFromDiscord, leaderboardTop: async (n: number) => {
     const s = await db.season.findFirst({ where: { isActive: true } });
     if (!s) return [];
     return (await seasonStandings(s.id)).slice(0, n).map((r) => ({ displayName: r.user.displayName, points: r.points, wins: r.wins, losses: r.losses }));

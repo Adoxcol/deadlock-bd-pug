@@ -3,9 +3,9 @@ import { atLeast } from '../auth/rbac.js';
 
 /** Minimum community role per slash command. Checked server-side against the linked User. */
 export const COMMAND_PERMISSIONS: Record<string, Role> = {
-  'pug create': 'MODERATOR', 'pug status': 'SPECTATOR',
-  'draft create': 'CAPTAIN', 'draft view': 'SPECTATOR',
-  'match track': 'MODERATOR', 'match live': 'SPECTATOR', 'match history': 'SPECTATOR',
+  'pug create': 'PLAYER', 'pug status': 'SPECTATOR',
+  'draft create': 'PLAYER', 'draft view': 'SPECTATOR',
+  'match track': 'MODERATOR', 'match import': 'PLAYER', 'match live': 'SPECTATOR', 'match history': 'SPECTATOR',
   leaderboard: 'SPECTATOR', stats: 'SPECTATOR',
 };
 

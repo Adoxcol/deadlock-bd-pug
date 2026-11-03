@@ -8,6 +8,7 @@ export interface BotDeps {
   db: PrismaClient; publicUrl: string;
   createPug(createdById: string): Promise<{ id: string; number: number }>;
   leaderboard(limit: number): Promise<Array<{ displayName: string; points: number; wins: number; losses: number }>>;
+  importMatch(matchId: string, userId: string): Promise<{ status: 'imported'; id: string } | { status: 'unknown_players'; unknown: number }>;
 }
 
 const definitions = [
@@ -19,6 +20,7 @@ const definitions = [
     .addSubcommand((s) => s.setName('view').setDescription('Get a draft link').addStringOption((o) => o.setName('id').setDescription('Draft ID').setRequired(true))),
   new SlashCommandBuilder().setName('match').setDescription('Matches')
     .addSubcommand((s) => s.setName('track').setDescription('Track a match (opens tracker)'))
+    .addSubcommand((s) => s.setName('import').setDescription('Add a finished match to the site').addStringOption((o) => o.setName('id').setDescription('Match ID').setRequired(true)))
     .addSubcommand((s) => s.setName('live').setDescription('Current live matches'))
     .addSubcommand((s) => s.setName('history').setDescription('Recent results')),
   new SlashCommandBuilder().setName('leaderboard').setDescription('Community rankings'),
@@ -55,6 +57,20 @@ export async function startBot(token: string, appId: string, guildId: string | u
       case 'draft create': await i.reply({ content: 'Create a draft room on the website:', components: [link('/drafts/new', 'New draft')], ephemeral: true }); return;
       case 'draft view': await i.reply({ components: [link(`/draft/${encodeURIComponent(i.options.getString('id', true))}/spectate`, 'Watch draft')] }); return;
       case 'match track': await i.reply({ components: [link('/tracker', 'Open tracker')], ephemeral: true }); return;
+      case 'match import': {
+        const id = i.options.getString('id', true).trim();
+        if (!/^\d{1,20}$/.test(id)) { await i.reply({ content: 'Enter a numeric Match ID.', ephemeral: true }); return; }
+        await i.deferReply(); // the Deadlock API can take longer than Discord's 3 second limit
+        try {
+          const out = await deps.importMatch(id, userId!);
+          if (out.status === 'imported') await i.editReply({ content: `Match ${id} added to the leaderboard.`, components: [link(`/matches/${out.id}`, 'View match')] });
+          else await i.editReply({ content: `Match ${id} was not added: ${out.unknown} of its players aren't known to the site yet. They need to link Steam, or a moderator can name them on the site.`, components: [link('/admin', 'Open Admin')] });
+        } catch (e) {
+          const status = (e as { statusCode?: number }).statusCode;
+          await i.editReply({ content: status ? (e as Error).message : 'Something went wrong.' });
+        }
+        return;
+      }
       case 'match live': {
         const ms = await deps.db.match.findMany({ where: { trackingState: { in: ['MATCH_DETECTED', 'LIVE_AVAILABLE'] } }, take: 5 });
         await i.reply({ content: ms.length ? ms.map((m) => `${deps.publicUrl}/matches/${m.id}/live`).join('\n') : 'No matches in progress.' }); return;

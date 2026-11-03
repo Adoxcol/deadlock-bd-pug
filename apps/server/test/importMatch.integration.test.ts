@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
-import { importMatch, previewMatchImport } from '../src/results/importMatch.js';
+import { importKnownMatch, importMatch, previewMatchImport, recordLobbyResult } from '../src/results/importMatch.js';
 import type { DeadlockApi } from '../src/tracker/deadlockApi.js';
 
 // Runs only with TEST_DATABASE_URL (a disposable, migrated Postgres). The normal suite needs no database.
@@ -51,5 +51,31 @@ describe.skipIf(!url)('importMatch (Postgres)', () => {
     expect(await db.playerStatistic.count({ where: { userId: owner } })).toBe(2);
     const r = await db.match.findUniqueOrThrow({ where: { deadlockMatchId: later }, include: { result: true } });
     expect(r.result!.amberRating).toBeGreaterThan(r.result!.sapphireRating!);
+  });
+  it('adds a match by anyone only when every player is known', async () => {
+    const known = `${base}3`; starts[known] = 3_000_000;
+    expect(await importKnownMatch(db, api, { matchId: known, verifiedById: actor })).toMatchObject({ status: 'imported' });
+    const strangers = `${base}4`;
+    const other = { matchMetadata: async () => ({ ok: true, data: { match_info: { start_time: 4_000_000, winning_team: 1, players: [{ account_id: base + 9, team: 0, hero_id: 2 }] } } }) } as unknown as DeadlockApi;
+    expect(await importKnownMatch(db, other, { matchId: strangers, verifiedById: actor })).toEqual({ status: 'unknown_players', unknown: 1 });
+    expect(await db.match.findUnique({ where: { deadlockMatchId: strangers } })).toBeNull();
+  });
+  it('records a lobby result on its own, once, naming assigned players', async () => {
+    const id = `${base}5`;
+    const row = await db.match.create({ data: { deadlockMatchId: id, partyId: `p${base}`, trackingState: 'MATCH_DETECTED' } });
+    const lobbyApi = { matchMetadata: async () => ({ ok: true, data: { match_info: { start_time: 5_000_000, duration_s: 60, winning_team: 1, players: [{ account_id: base + 7, team: 0, hero_id: 3 }, { account_id: Number(b), team: 1, hero_id: 1 }] } } }) } as unknown as DeadlockApi;
+    const drafted = await db.user.create({ data: { displayName: 'Drafted' } });
+    expect(await recordLobbyResult(db, lobbyApi, row.id, [{ userId: drafted.id, heroId: 3 }])).toBe(true);
+    expect(await recordLobbyResult(db, lobbyApi, row.id, [])).toBe(false);
+    const done = await db.match.findUniqueOrThrow({ where: { id: row.id }, include: { result: { include: { stats: true } } } });
+    expect(done.trackingState).toBe('MATCH_COMPLETED');
+    expect(done.result).toMatchObject({ source: 'API', rated: true, winner: 'SAPPHIRE' });
+    expect(done.result!.stats.find((s) => s.team === 'AMBER')).toMatchObject({ userId: drafted.id, displayNameSnapshot: 'Drafted', won: false });
+  });
+  it('leaves a running match alone', async () => {
+    const row = await db.match.create({ data: { deadlockMatchId: `${base}6`, partyId: `q${base}` } });
+    const running = { matchMetadata: async () => ({ ok: true, data: { match_info: { players: [{ account_id: 1, team: 0, hero_id: 1 }] } } }) } as unknown as DeadlockApi;
+    await expect(recordLobbyResult(db, running, row.id, [])).rejects.toMatchObject({ statusCode: 422 });
+    expect(await db.matchResult.findUnique({ where: { matchId: row.id } })).toBeNull();
   });
 });

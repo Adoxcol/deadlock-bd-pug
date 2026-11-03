@@ -140,8 +140,9 @@ import { canRunCommand } from '../src/discord/commands.js';
 import { atLeast, canAssignRole } from '../src/auth/rbac.js';
 describe('permissions', () => {
   it('discord command authorization', () => {
-    expect(canRunCommand('pug create', 'PLAYER')).toBe(false);
-    expect(canRunCommand('pug create', 'MODERATOR')).toBe(true);
+    expect(canRunCommand('pug create', 'PLAYER')).toBe(true);
+    expect(canRunCommand('match import', 'PLAYER')).toBe(true);
+    expect(canRunCommand('match track', 'PLAYER')).toBe(false);
     expect(canRunCommand('pug create', undefined)).toBe(false);
     expect(canRunCommand('leaderboard', undefined)).toBe(true);
     expect(canRunCommand('draft create', 'CAPTAIN')).toBe(true);

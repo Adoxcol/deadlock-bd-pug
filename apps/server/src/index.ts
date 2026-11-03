@@ -11,6 +11,7 @@ if (cfg.DISCORD_BOT_TOKEN && cfg.DISCORD_CLIENT_ID) {
     db: built.db, publicUrl: cfg.PUBLIC_URL,
     createPug: (uid) => built.createPug(uid, { format: '6v6', draftProvider: 'NATIVE', amberName: 'Team Amber', sapphireName: 'Team Sapphire' }),
     leaderboard: built.leaderboardTop,
+    importMatch: built.importFromDiscord,
   }).then((s) => { sender = s; built.app.log.info('Discord bot connected'); }).catch((e) => built.app.log.error(e, 'Discord bot failed to start'));
 } else built.app.log.warn('Discord bot not configured; notifications will be marked skipped');
 await built.app.listen({ port: cfg.PORT, host: '0.0.0.0' });

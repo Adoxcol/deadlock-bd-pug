@@ -21,3 +21,5 @@ Each match a player earns, rounded to the nearest whole number and never below 0
 - The lower-rated team earns +1 point per 10 rating of average gap, up to +20, or half that if it loses. The favourite loses nothing.
 
 Moderators add finished matches from Admin → Import match. Later matches' team ratings are recalculated, because a late import changes what those teams had going in.
+
+Site-created lobbies record their own result: the server checks for official data and stores it with no moderator step. Any player can add a finished match with `/match import` in Discord when all its players are already known. Players who can't be identified get a placeholder they can claim by linking Steam.

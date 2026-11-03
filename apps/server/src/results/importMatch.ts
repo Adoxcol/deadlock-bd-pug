@@ -11,7 +11,7 @@ interface Fetched { startedAt: Date; durationSec: number | null; winner: Side; p
 /** Team and winner are read from the raw metadata (0 = the Hidden King = Amber); the API publishes no player names. */
 async function fetchMatch(api: DeadlockApi, matchId: string): Promise<Fetched> {
   const r = await api.matchMetadata(matchId);
-  if (!r.ok) throw fail(r.status === 'not_found' ? 404 : 502, r.status === 'not_found' ? 'Stats are not published for this match yet.' : r.message);
+  if (!r.ok) throw fail(r.status === 'not_found' ? 404 : r.status === 'rate_limited' ? 429 : 502, r.status === 'not_found' ? 'Stats are not published for this match yet.' : r.message);
   const meta = normalizeMetadata(r.data);
   const info = (r.data as { match_info?: { start_time?: unknown; winning_team?: unknown; players?: { account_id?: unknown; team?: unknown }[] } }).match_info;
   const start = Number(info?.start_time), winner = Number(info?.winning_team);
@@ -59,6 +59,44 @@ export async function importMatch(db: PrismaClient, api: DeadlockApi, opts: { ma
     await replayTeamRatings(tx, season.id, m.startedAt);
     return { id: match.id, players: m.players.length };
   }, { timeout: 60_000 });
+}
+
+/** Anyone can add a match whose players are all known, which keeps unrelated public matches off the leaderboard. */
+export async function importKnownMatch(db: PrismaClient, api: DeadlockApi, opts: { matchId: string; verifiedById: string }): Promise<{ status: 'imported'; id: string } | { status: 'unknown_players'; unknown: number }> {
+  const p = await previewMatchImport(db, api, opts.matchId);
+  const unknown = p.players.filter((x) => !x.name).length;
+  if (unknown) return { status: 'unknown_players', unknown };
+  const out = await importMatch(db, api, { ...opts, names: Object.fromEntries(p.players.map((x) => [x.accountId, x.name!])) });
+  return { status: 'imported', id: out.id };
+}
+
+/**
+ * Records the result of a site-created lobby once official data is published; returns false if the row needs nothing.
+ * Teams come from the game, not the draft. Players are found by linked Steam, then by the hero they were assigned;
+ * anyone else gets a placeholder they can claim by linking Steam.
+ */
+export async function recordLobbyResult(db: PrismaClient, api: DeadlockApi, matchRowId: string, assignments: { userId: string; heroId: number }[]): Promise<boolean> {
+  const row = await db.match.findUnique({ where: { id: matchRowId }, include: { result: true } });
+  if (!row?.deadlockMatchId || row.result || row.isSimulated) return false;
+  const season = await db.season.findFirst({ where: { isActive: true, isSimulated: false } });
+  if (!season) return false;
+  const m = await fetchMatch(api, row.deadlockMatchId);
+  await db.$transaction(async (tx) => {
+    const result = await tx.matchResult.create({ data: { matchId: row.id, seasonId: season.id, winner: m.winner, source: 'API', verified: true, rated: true, createdAt: m.startedAt } });
+    const used = new Set<string>();
+    for (const p of m.players) {
+      const steam = await tx.steamAccount.findUnique({ where: { accountId: p.accountId }, include: { user: true } });
+      const assigned = assignments.find((a) => a.heroId === p.heroId && !used.has(a.userId));
+      const user = steam?.user ?? (assigned && await tx.user.findUnique({ where: { id: assigned.userId } }))
+        ?? await tx.user.create({ data: { displayName: `Player ${p.accountId}`, steam: { create: { accountId: p.accountId, steamId64: String(STEAM_ID_OFFSET + BigInt(p.accountId)) } } } });
+      used.add(user.id);
+      await tx.playerStatistic.create({ data: { resultId: result.id, userId: user.id, team: p.team, won: p.team === m.winner, displayNameSnapshot: user.displayName, heroId: p.heroId, kills: p.kills, deaths: p.deaths, assists: p.assists, netWorth: p.netWorth, heroDamage: p.heroDamage, details: p.details as unknown as Prisma.InputJsonValue } });
+    }
+    await tx.match.update({ where: { id: row.id }, data: { trackingState: 'MATCH_COMPLETED', startedAt: m.startedAt, endedAt: m.durationSec === null ? null : new Date(m.startedAt.getTime() + m.durationSec * 1000), durationSec: m.durationSec, trackingNote: 'Result recorded from official data.' } });
+    if (row.pugId) await tx.pugSession.update({ where: { id: row.pugId }, data: { status: 'COMPLETED', completedAt: new Date() } });
+    await replayTeamRatings(tx, season.id, m.startedAt);
+  }, { timeout: 60_000 });
+  return true;
 }
 
 /** A match can be imported late, so later results' "ratings going in" (which set their bonus) are recalculated in play order. */
